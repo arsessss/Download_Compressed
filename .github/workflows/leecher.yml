@@ -89,13 +89,6 @@ jobs:
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install Docker (for yt-dlp container)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y docker.io
-          sudo systemctl start docker
-          sudo usermod -aG docker $USER
-
       - name: Install dependencies (7z, ffmpeg)
         run: |
           sudo apt-get update -qq
@@ -138,7 +131,7 @@ jobs:
 
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
               echo "Detected YouTube link. Downloading with yt-dlp Docker container..."
-              docker run --rm \
+              sudo docker run --rm \
                 -v $(pwd)/files:/downloads \
                 ghcr.io/jim60105/yt-dlp:pot \
                 yt-dlp \
@@ -151,7 +144,7 @@ jobs:
 
               DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
               if [ -f "$DOWNLOADED_FILE" ]; then
-                TITLE=$(docker run --rm ghcr.io/jim60105/yt-dlp:pot yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
+                TITLE=$(sudo docker run --rm ghcr.io/jim60105/yt-dlp:pot yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
                 if [ -z "$TITLE" ]; then
                   TITLE="youtube_video_${counter}"
                 fi
