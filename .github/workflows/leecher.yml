@@ -91,20 +91,13 @@ jobs:
 
       - name: Install Deno and yt-dlp with EJS support
         run: |
-          # Install Deno (JavaScript runtime for solving YouTube challenges)
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
-          
-          # Install yt-dlp with EJS scripts (required for n-challenge solving)
           pip3 install "yt-dlp[default]" yt-dlp-ejs --break-system-packages || pip3 install "yt-dlp[default]" yt-dlp-ejs
-          
-          # Download static ffmpeg
           curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz | tar -xJ
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
           rm -rf ffmpeg-master-latest-linux64-gpl
-          
-          # Install 7zip
           sudo apt-get update -qq && sudo apt-get install -y p7zip-full
 
       - name: Create cookies file from secret
@@ -116,7 +109,6 @@ jobs:
         run: |
           SIZE=$(echo "${{ github.event.inputs.split_size }}" | grep -oP '\d+')
           echo "split_mb=${SIZE:-95}" >> $GITHUB_OUTPUT
-
           cat > urls.txt << URLEOF
           ${{ github.event.inputs.file_url_1 }}
           ${{ github.event.inputs.file_url_2 }}
@@ -124,10 +116,8 @@ jobs:
           ${{ github.event.inputs.file_url_4 }}
           ${{ github.event.inputs.file_url_5 }}
           URLEOF
-
           sed -i '/^$/d' urls.txt
           sed -i 's/^[ \t]*//;s/[ \t]*$//' urls.txt
-
           total=$(wc -l < urls.txt)
           echo "url_count=${total}" >> $GITHUB_OUTPUT
           echo "URL count: ${total}"
@@ -147,21 +137,21 @@ jobs:
             echo "[$counter/$total] Processing: $url"
 
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "Detected YouTube link. Downloading with yt-dlp + Deno + cookies..."
+              echo "Detected YouTube link. Requested quality: ${YT_QUALITY}p"
+              echo "Downloading with yt-dlp + Deno + cookies..."
 
-              # Try multiple extraction methods to ensure success
+              # Improved format selector that respects the chosen height limit
               yt-dlp --cookies cookies.txt \
                      --extractor-args "youtube:player_client=tv,android_sdkless" \
                      --js-runtime deno \
-                     -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
+                     -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
                      --merge-output-format mp4 \
                      -o "files/yt_video_${counter}.%(ext)s" \
                      "$url" || \
               yt-dlp --cookies cookies.txt \
                      --extractor-args "youtube:player_client=web" \
                      --js-runtime deno \
-                     -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
-                     --merge-output-format mp4 \
+                     -f "best[height<=${YT_QUALITY}]" \
                      -o "files/yt_video_${counter}.%(ext)s" \
                      "$url"
 
@@ -172,6 +162,14 @@ jobs:
                   TITLE="youtube_video_${counter}"
                 fi
                 mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
+                # Verify actual resolution
+                RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "files/${TITLE}.mp4" 2>/dev/null | tr -d '\n')
+                if [ -n "$RES" ]; then
+                  echo "Actual resolution: ${RES}p"
+                  if [ "$RES" -lt "${YT_QUALITY}" ]; then
+                    echo "⚠️ Note: Requested ${YT_QUALITY}p but got ${RES}p (source may not have ${YT_QUALITY}p)"
+                  fi
+                fi
                 size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
                 echo "Downloaded: ${TITLE}.mp4 ($size)"
                 success=$((success + 1))
