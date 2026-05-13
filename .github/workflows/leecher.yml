@@ -89,13 +89,22 @@ jobs:
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install yt-dlp and fast ffmpeg (no apt hell)
+      - name: Install Deno and yt-dlp with EJS support
         run: |
-          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
+          # Install Deno (JavaScript runtime for solving YouTube challenges)
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          
+          # Install yt-dlp with EJS scripts (required for n-challenge solving)
+          pip3 install "yt-dlp[default]" yt-dlp-ejs --break-system-packages || pip3 install "yt-dlp[default]" yt-dlp-ejs
+          
+          # Download static ffmpeg
           curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz | tar -xJ
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
           rm -rf ffmpeg-master-latest-linux64-gpl
+          
+          # Install 7zip
           sudo apt-get update -qq && sudo apt-get install -y p7zip-full
 
       - name: Create cookies file from secret
@@ -124,7 +133,7 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Download files (YouTube with cookies, direct via curl)
+      - name: Download files (YouTube with Deno + cookies, direct via curl)
         id: download_files
         run: |
           mkdir -p files
@@ -138,8 +147,19 @@ jobs:
             echo "[$counter/$total] Processing: $url"
 
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "Detected YouTube link. Downloading with yt-dlp + cookies..."
+              echo "Detected YouTube link. Downloading with yt-dlp + Deno + cookies..."
+
+              # Try multiple extraction methods to ensure success
               yt-dlp --cookies cookies.txt \
+                     --extractor-args "youtube:player_client=tv,android_sdkless" \
+                     --js-runtime deno \
+                     -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
+                     --merge-output-format mp4 \
+                     -o "files/yt_video_${counter}.%(ext)s" \
+                     "$url" || \
+              yt-dlp --cookies cookies.txt \
+                     --extractor-args "youtube:player_client=web" \
+                     --js-runtime deno \
                      -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
                      --merge-output-format mp4 \
                      -o "files/yt_video_${counter}.%(ext)s" \
@@ -147,7 +167,7 @@ jobs:
 
               DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
               if [ -f "$DOWNLOADED_FILE" ]; then
-                TITLE=$(yt-dlp --cookies cookies.txt --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
+                TITLE=$(yt-dlp --cookies cookies.txt --js-runtime deno --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
                 if [ -z "$TITLE" ]; then
                   TITLE="youtube_video_${counter}"
                 fi
