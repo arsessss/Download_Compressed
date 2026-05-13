@@ -1,35 +1,35 @@
-name: انتقال فایل به گیت هاب (پشتیبانی از لینک یوتیوب)
+name: Transfer file to GitHub (supports YouTube links)
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'لینک ۱ (میتواند لینک یوتیوب یا لینک مستقیم باشد)'
+        description: 'Link 1 (required) - can be YouTube or direct link'
         required: true
         type: string
         default: ''
       file_url_2:
-        description: 'لینک ۲ (اختیاری)'
+        description: 'Link 2 (optional)'
         required: false
         type: string
         default: ''
       file_url_3:
-        description: 'لینک ۳ (اختیاری)'
+        description: 'Link 3 (optional)'
         required: false
         type: string
         default: ''
       file_url_4:
-        description: 'لینک ۴ (اختیاری)'
+        description: 'Link 4 (optional)'
         required: false
         type: string
         default: ''
       file_url_5:
-        description: 'لینک ۵ (اختیاری)'
+        description: 'Link 5 (optional)'
         required: false
         type: string
         default: ''
       youtube_quality:
-        description: 'کیفیت برای لینک‌های یوتیوب'
+        description: 'Quality for YouTube links'
         required: false
         type: choice
         default: '1080'
@@ -41,21 +41,21 @@ on:
           - '480'
           - '360'
       zip_password:
-        description: '🔒 تعیین رمز برای فایل آرشیو'
+        description: '🔒 Set password for archive file'
         required: false
         type: string
         default: ''
       split_size:
-        description: 'حداکثر حجم هر تکه (مگابایت)'
+        description: 'Maximum size per chunk (MB)'
         required: false
         type: choice
-        default: '95  (حداکثر - برای فایل‌های حجیم)'
+        default: '95  (maximum - for large files)'
         options:
-          - '25  (اینترنت ضعیف - فایل‌های کوچک)'
-          - '50  (متوسط)'
-          - '95  (حداکثر - برای فایل‌های حجیم)'
+          - '25  (slow internet - small files)'
+          - '50  (medium)'
+          - '95  (maximum - for large files)'
       delete_old_archives:
-        description: 'پاک کردن فایل‌های قبلی (در صورت تیک زدن، تمام آرشیوهای قدیمی حذف میشن)'
+        description: 'Delete old archives (if checked, all previous archives will be removed)'
         required: false
         type: boolean
         default: false
@@ -89,22 +89,17 @@ jobs:
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install PO Token Provider (bgutil)
-        run: |
-          wget https://github.com/jim60105/bgutil-ytdlp-pot-provider-rs/releases/latest/download/bgutil-pot-linux-x86_64
-          chmod +x bgutil-pot-linux-x86_64
-          sudo mv bgutil-pot-linux-x86_64 /usr/local/bin/
-
-      - name: Start PO Token Server
-        run: |
-          bgutil-pot server --port 8989 &
-          sleep 5
-
-      - name: Install yt-dlp and dependencies
+      - name: Install Docker (for yt-dlp container)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full ffmpeg python3-pip
-          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
+          sudo apt-get install -y docker.io
+          sudo systemctl start docker
+          sudo usermod -aG docker $USER
+
+      - name: Install dependencies (7z, ffmpeg, etc.)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full ffmpeg
 
       - name: Parse inputs
         id: parse
@@ -128,7 +123,7 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Download files (supports YouTube links with PO Token)
+      - name: Download files (supports YouTube links via Docker container)
         id: download_files
         run: |
           mkdir -p files
@@ -143,23 +138,26 @@ jobs:
 
             # Check if URL is a YouTube link
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "Detected YouTube link. Downloading with yt-dlp + PO Token..."
+              echo "Detected YouTube link. Downloading with yt-dlp Docker container..."
 
-              # Download with yt-dlp using the local PO token provider
-              yt-dlp --use-pot-provider http://127.0.0.1:8989 \
-                     --sleep-interval 10 \
-                     --max-sleep-interval 15 \
-                     -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
-                     --merge-output-format mp4 \
-                     -o "files/yt_video_${counter}.%(ext)s" \
-                     "$url"
+              # Use the pre-configured Docker container with PO token support
+              docker run --rm \
+                -v $(pwd)/files:/downloads \
+                ghcr.io/jim60105/yt-dlp:pot \
+                yt-dlp \
+                --sleep-interval 10 \
+                --max-sleep-interval 15 \
+                -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
+                --merge-output-format mp4 \
+                -o "/downloads/yt_video_${counter}.%(ext)s" \
+                "$url"
 
               # Get the actual filename
               DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
 
               if [ -f "$DOWNLOADED_FILE" ]; then
                 # Rename to a meaningful name
-                TITLE=$(yt-dlp --use-pot-provider http://127.0.0.1:8989 --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
+                TITLE=$(docker run --rm ghcr.io/jim60105/yt-dlp:pot yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
                 if [ -z "$TITLE" ]; then
                   TITLE="youtube_video_${counter}"
                 fi
@@ -329,21 +327,17 @@ jobs:
           echo "========================================="
 
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          <div dir="rtl">
+          ## 📊 Execution Summary
 
-          ## 📊 خلاصه اجرا
+          | Item | Value |
+      |------|-------|
+          | Successful downloads | ${{ steps.download_files.outputs.success_count }} out of ${{ steps.parse.outputs.url_count }} |
+          | Files processed | ${{ steps.process_files.outputs.processed_count }} |
+          | Max chunk size | ${{ steps.parse.outputs.split_mb }} MB |
+          | Total size | ${TOTAL_SIZE} |
+          | 📂 Download folder | [ ${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
+          | Status | ✅ Success |
 
-          | مورد | مقدار |
-          |------|-------|
-          | دانلود موفق | ${{ steps.download_files.outputs.success_count }} از ${{ steps.parse.outputs.url_count }} |
-          | فایل پردازش شده | ${{ steps.process_files.outputs.processed_count }} عدد |
-          | حداکثر حجم هر تکه | ${{ steps.parse.outputs.split_mb }} مگابایت |
-          | حجم کل | ${TOTAL_SIZE} |
-          | 📂 پوشه دانلود | [ ${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
-          | وضعیت | ✅ موفق |
-
-           ---
-          ## تقدیم به همه آن‌هایی که راهی جز عبور ندارند. - [حسین بلنج](https://balanj.ir)
-                   
-          </div>
+          ---
+          Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)
           EOF
