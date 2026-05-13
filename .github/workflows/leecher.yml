@@ -89,11 +89,14 @@ jobs:
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install yt-dlp and dependencies
+      - name: Install yt-dlp and fast ffmpeg (no apt hell)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full ffmpeg python3-pip
           pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
+          curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz | tar -xJ
+          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
+          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+          rm -rf ffmpeg-master-latest-linux64-gpl
+          sudo apt-get update -qq && sudo apt-get install -y p7zip-full
 
       - name: Create cookies file from secret
         run: |
@@ -137,8 +140,6 @@ jobs:
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
               echo "Detected YouTube link. Downloading with yt-dlp + cookies..."
               yt-dlp --cookies cookies.txt \
-                     --sleep-interval 10 \
-                     --max-sleep-interval 15 \
                      -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
                      --merge-output-format mp4 \
                      -o "files/yt_video_${counter}.%(ext)s" \
