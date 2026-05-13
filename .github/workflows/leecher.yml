@@ -89,10 +89,15 @@ jobs:
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install dependencies
+      - name: Install yt-dlp and dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full jq curl
+          sudo apt-get install -y p7zip-full ffmpeg python3-pip
+          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
+
+      - name: Create cookies file from secret
+        run: |
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
 
       - name: Parse inputs
         id: parse
@@ -116,7 +121,7 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Download files (YouTube via Cobalt API, direct via curl)
+      - name: Download files (YouTube with cookies, direct via curl)
         id: download_files
         run: |
           mkdir -p files
@@ -130,34 +135,27 @@ jobs:
             echo "[$counter/$total] Processing: $url"
 
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "Detected YouTube link. Downloading via Cobalt API..."
-              API_RESPONSE=$(curl -s -X POST https://api.cobalt.tools/api/json \
-                -H "Accept: application/json" \
-                -H "Content-Type: application/json" \
-                -d "{
-                  \"url\": \"$url\",
-                  \"vQuality\": \"${YT_QUALITY}\",
-                  \"vCodec\": \"h264\",
-                  \"aFormat\": \"mp3\"
-                }")
-              
-              DOWNLOAD_URL=$(echo "$API_RESPONSE" | jq -r '.url')
-              FILENAME=$(echo "$API_RESPONSE" | jq -r '.filename')
-              
-              if [ "$DOWNLOAD_URL" != "null" ] && [ -n "$DOWNLOAD_URL" ]; then
-                echo "Got download URL, downloading file..."
-                # Use curl to download the actual video file
-                curl -L -o "files/${FILENAME}" "$DOWNLOAD_URL"
-                if [ -f "files/${FILENAME}" ]; then
-                  size=$(ls -lh "files/${FILENAME}" | awk '{print $5}')
-                  echo "Downloaded: ${FILENAME} ($size)"
-                  success=$((success + 1))
-                else
-                  echo "Failed to download file from Cobalt URL"
+              echo "Detected YouTube link. Downloading with yt-dlp + cookies..."
+              yt-dlp --cookies cookies.txt \
+                     --sleep-interval 10 \
+                     --max-sleep-interval 15 \
+                     -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
+                     --merge-output-format mp4 \
+                     -o "files/yt_video_${counter}.%(ext)s" \
+                     "$url"
+
+              DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
+              if [ -f "$DOWNLOADED_FILE" ]; then
+                TITLE=$(yt-dlp --cookies cookies.txt --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
+                if [ -z "$TITLE" ]; then
+                  TITLE="youtube_video_${counter}"
                 fi
+                mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
+                size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
+                echo "Downloaded: ${TITLE}.mp4 ($size)"
+                success=$((success + 1))
               else
-                echo "Failed to get download URL from Cobalt API"
-                echo "API Response: $API_RESPONSE"
+                echo "Failed to download YouTube video"
               fi
             else
               echo "Normal direct download"
