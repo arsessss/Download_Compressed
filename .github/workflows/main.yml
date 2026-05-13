@@ -96,7 +96,7 @@ jobs:
           sudo systemctl start docker
           sudo usermod -aG docker $USER
 
-      - name: Install dependencies (7z, ffmpeg, etc.)
+      - name: Install dependencies (7z, ffmpeg)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y p7zip-full ffmpeg
@@ -123,7 +123,7 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Download files (supports YouTube links via Docker container)
+      - name: Download files (YouTube via Docker, direct via curl)
         id: download_files
         run: |
           mkdir -p files
@@ -136,11 +136,8 @@ jobs:
             echo "========================================="
             echo "[$counter/$total] Processing: $url"
 
-            # Check if URL is a YouTube link
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
               echo "Detected YouTube link. Downloading with yt-dlp Docker container..."
-
-              # Use the pre-configured Docker container with PO token support
               docker run --rm \
                 -v $(pwd)/files:/downloads \
                 ghcr.io/jim60105/yt-dlp:pot \
@@ -152,11 +149,8 @@ jobs:
                 -o "/downloads/yt_video_${counter}.%(ext)s" \
                 "$url"
 
-              # Get the actual filename
               DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
-
               if [ -f "$DOWNLOADED_FILE" ]; then
-                # Rename to a meaningful name
                 TITLE=$(docker run --rm ghcr.io/jim60105/yt-dlp:pot yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
                 if [ -z "$TITLE" ]; then
                   TITLE="youtube_video_${counter}"
@@ -169,47 +163,33 @@ jobs:
                 echo "Failed to download YouTube video"
               fi
             else
-              # Normal direct download
               echo "Normal direct download"
-
               FILENAME_FROM_URL=$(echo "$url" | sed 's/?.*//' | xargs basename)
               if [ -z "$FILENAME_FROM_URL" ]; then
                 FILENAME_FROM_URL="unknown_${counter}"
               fi
-
               FILENAME_BASE="${FILENAME_FROM_URL%.*}"
               FILENAME_EXT="${FILENAME_FROM_URL##*.}"
               if [ "$FILENAME_BASE" = "$FILENAME_FROM_URL" ]; then
                 FILENAME_EXT=""
               fi
-
               PREFIX="sci-hub.ir"
-
               if [ "$total" -gt 1 ]; then
                 NUM=$(printf '%02d' $counter)
                 DL_NAME="${PREFIX}_${NUM}_${FILENAME_BASE}"
               else
                 DL_NAME="${PREFIX}_${FILENAME_BASE}"
               fi
-
               MAXLEN=50
               if [ ${#DL_NAME} -gt $MAXLEN ]; then
-                if [ "$total" -gt 1 ]; then
-                  KEEP=$((MAXLEN - ${#PREFIX} - 4))
-                else
-                  KEEP=$((MAXLEN - ${#PREFIX} - 1))
-                fi
                 DL_NAME="${DL_NAME:0:$MAXLEN}"
               fi
-
               if [ -n "$FILENAME_EXT" ]; then
                 FINAL_FILENAME="${DL_NAME}.${FILENAME_EXT}"
               else
                 FINAL_FILENAME="${DL_NAME}"
               fi
-
               echo "Download filename: ${FINAL_FILENAME}"
-
               if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FINAL_FILENAME}" "$url"; then
                 size=$(ls -lh "files/${FINAL_FILENAME}" | awk '{print $5}')
                 echo "Downloaded: ${FINAL_FILENAME} ($size)"
@@ -218,12 +198,10 @@ jobs:
                 echo "Failed: $url"
               fi
             fi
-
             counter=$((counter + 1))
           done < urls.txt
 
           echo "success_count=${success}" >> $GITHUB_OUTPUT
-          echo "Downloaded: $success / $total"
 
       - name: Process and archive each file
         id: process_files
@@ -238,32 +216,21 @@ jobs:
           echo "Split size: ${SPLIT_MB}MB"
 
           counter=0
-
           for file in files/*; do
             [ -f "$file" ] || continue
             counter=$((counter + 1))
-
-            echo "========================================="
             echo "Processing: $(basename "$file")"
-
             FILENAME=$(basename "$file")
-
             if [ "${#PASSWORD}" -gt 0 ]; then
               7z a -p"$PASSWORD" -mhe=on -mx=3 -v${SPLIT_MB}m "${FOLDER}/${FILENAME}.7z" "$file"
             else
               7z a -mx=3 -v${SPLIT_MB}m "${FOLDER}/${FILENAME}.7z" "$file"
             fi
-
             if [ -f "${FOLDER}/${FILENAME}.7z.001" ] && [ ! -f "${FOLDER}/${FILENAME}.7z.002" ]; then
               mv "${FOLDER}/${FILENAME}.7z.001" "${FOLDER}/${FILENAME}.7z"
-              echo "Single chunk"
-            else
-              echo "Multiple chunks"
             fi
           done
-
           rm -rf files
-
           echo "processed_count=${counter}" >> $GITHUB_OUTPUT
           echo "folder=${FOLDER}" >> $GITHUB_OUTPUT
 
@@ -276,68 +243,42 @@ jobs:
       - name: Commit and Push all chunks
         run: |
           FOLDER="${{ steps.process_files.outputs.folder }}"
-
-          echo "Adding files from ${FOLDER}..."
           git add "${FOLDER}/"*.7z* 2>/dev/null || true
-
           if ! git diff --staged --quiet; then
             file_count=$(git diff --staged --name-only | wc -l)
-            git commit -m "Add ${{ steps.process_files.outputs.processed_count }} file(s) in ${FOLDER} (${file_count} chunks)"
-            echo "Committed $file_count files."
-
+            git commit -m "Add files in ${FOLDER} (${file_count} chunks)"
             push_success=false
             max_attempts=15
-
             for attempt in $(seq 1 $max_attempts); do
-              echo "Push attempt $attempt of $max_attempts..."
               git pull --rebase origin main 2>/dev/null || true
-
               if git push origin main; then
-                echo "Push successful on attempt $attempt."
                 push_success=true
                 break
               else
-                echo "Push failed. Retrying in 20 seconds..."
                 sleep 20
               fi
             done
-
             if [ "$push_success" = false ]; then
-              echo "Push failed after $max_attempts attempts."
               exit 1
             fi
-          else
-            echo "No files to commit."
           fi
 
       - name: Summary
         run: |
           FOLDER="${{ steps.process_files.outputs.folder }}"
           TOTAL_SIZE=$(du -sh "$FOLDER" 2>/dev/null | awk '{print $1}')
-          if [ -z "$TOTAL_SIZE" ]; then TOTAL_SIZE="N/A"; fi
-
-          echo ""
-          echo "========================================="
-          echo "Job completed!"
-          echo "Downloaded: ${{ steps.download_files.outputs.success_count }} / ${{ steps.parse.outputs.url_count }}"
-          echo "Processed: ${{ steps.process_files.outputs.processed_count }} file(s)"
-          echo "Split size: ${{ steps.parse.outputs.split_mb }}MB"
-          echo "Folder: $FOLDER"
-          echo "Total size: ${TOTAL_SIZE}"
-          echo "========================================="
-
+          [ -z "$TOTAL_SIZE" ] && TOTAL_SIZE="N/A"
+          echo "Job completed! Folder: $FOLDER, Size: $TOTAL_SIZE"
           cat >> $GITHUB_STEP_SUMMARY << EOF
           ## 📊 Execution Summary
-
           | Item | Value |
-      |------|-------|
-          | Successful downloads | ${{ steps.download_files.outputs.success_count }} out of ${{ steps.parse.outputs.url_count }} |
+          |------|-------|
+          | Successful downloads | ${{ steps.download_files.outputs.success_count }} / ${{ steps.parse.outputs.url_count }} |
           | Files processed | ${{ steps.process_files.outputs.processed_count }} |
           | Max chunk size | ${{ steps.parse.outputs.split_mb }} MB |
           | Total size | ${TOTAL_SIZE} |
-          | 📂 Download folder | [ ${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
+          | 📂 Download folder | [${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
           | Status | ✅ Success |
-
           ---
           Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)
           EOF
