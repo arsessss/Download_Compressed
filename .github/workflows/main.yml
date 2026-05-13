@@ -1,10 +1,10 @@
-name: انتقال فایل به گیت هاب
+name: انتقال فایل به گیت هاب (پشتیبانی از لینک یوتیوب)
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'لینک ۱ (الزامی)'
+        description: 'لینک ۱ (میتواند لینک یوتیوب یا لینک مستقیم باشد)'
         required: true
         type: string
         default: ''
@@ -28,14 +28,25 @@ on:
         required: false
         type: string
         default: ''
+      youtube_quality:
+        description: 'کیفیت برای لینک‌های یوتیوب'
+        required: false
+        type: choice
+        default: '1080'
+        options:
+          - '2160'
+          - '1440'
+          - '1080'
+          - '720'
+          - '480'
+          - '360'
       zip_password:
         description: '🔒 تعیین رمز برای فایل آرشیو'
         required: false
         type: string
         default: ''
       split_size:
-        description: |
-          حداکثر حجم هر تکه (مگابایت)
+        description: 'حداکثر حجم هر تکه (مگابایت)'
         required: false
         type: choice
         default: '95  (حداکثر - برای فایل‌های حجیم)'
@@ -78,6 +89,12 @@ jobs:
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
+      - name: Install yt-dlp and dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full ffmpeg python3-pip
+          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
+
       - name: Parse inputs
         id: parse
         run: |
@@ -100,67 +117,94 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Install 7z
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full
-
-      - name: Download all files
+      - name: Download files (supports YouTube links)
         id: download_files
         run: |
           mkdir -p files
           total=${{ steps.parse.outputs.url_count }}
           counter=1
           success=0
+          YT_QUALITY="${{ github.event.inputs.youtube_quality }}"
 
           while IFS= read -r url; do
             echo "========================================="
-            echo "[$counter/$total] Downloading: $url"
+            echo "[$counter/$total] Processing: $url"
 
-            FILENAME_FROM_URL=$(echo "$url" | sed 's/?.*//' | xargs basename)
-            if [ -z "$FILENAME_FROM_URL" ]; then
-              FILENAME_FROM_URL="unknown_${counter}"
-            fi
+            # Check if URL is a YouTube link
+            if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
+              echo "Detected YouTube link. Downloading with yt-dlp..."
 
-            FILENAME_BASE="${FILENAME_FROM_URL%.*}"
-            FILENAME_EXT="${FILENAME_FROM_URL##*.}"
-            if [ "$FILENAME_BASE" = "$FILENAME_FROM_URL" ]; then
-              FILENAME_EXT=""
-            fi
+              # Download with yt-dlp in best quality up to selected resolution
+              yt-dlp -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
+                     --merge-output-format mp4 \
+                     -o "files/yt_video_${counter}.%(ext)s" \
+                     "$url"
 
-            PREFIX="sci-hub.ir"
+              # Get the actual filename
+              DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
 
-            if [ "$total" -gt 1 ]; then
-              NUM=$(printf '%02d' $counter)
-              DL_NAME="${PREFIX}_${NUM}_${FILENAME_BASE}"
-            else
-              DL_NAME="${PREFIX}_${FILENAME_BASE}"
-            fi
-
-            MAXLEN=50
-            if [ ${#DL_NAME} -gt $MAXLEN ]; then
-              if [ "$total" -gt 1 ]; then
-                KEEP=$((MAXLEN - ${#PREFIX} - 4))
+              if [ -f "$DOWNLOADED_FILE" ]; then
+                # Rename to a meaningful name
+                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
+                if [ -z "$TITLE" ]; then
+                  TITLE="youtube_video_${counter}"
+                fi
+                mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
+                size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
+                echo "Downloaded: ${TITLE}.mp4 ($size)"
+                success=$((success + 1))
               else
-                KEEP=$((MAXLEN - ${#PREFIX} - 1))
+                echo "Failed to download YouTube video"
               fi
-              DL_NAME="${DL_NAME:0:$MAXLEN}"
-            fi
-
-            if [ -n "$FILENAME_EXT" ]; then
-              FINAL_FILENAME="${DL_NAME}.${FILENAME_EXT}"
             else
-              FINAL_FILENAME="${DL_NAME}"
-            fi
+              # Normal direct download
+              echo "Normal direct download"
 
-            echo "Download filename: ${FINAL_FILENAME}"
+              FILENAME_FROM_URL=$(echo "$url" | sed 's/?.*//' | xargs basename)
+              if [ -z "$FILENAME_FROM_URL" ]; then
+                FILENAME_FROM_URL="unknown_${counter}"
+              fi
 
-            if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FINAL_FILENAME}" "$url"; then
-              size=$(ls -lh "files/${FINAL_FILENAME}" | awk '{print $5}')
-              echo "Downloaded: ${FINAL_FILENAME} ($size)"
-              success=$((success + 1))
-            else
-              echo "Failed: $url"
+              FILENAME_BASE="${FILENAME_FROM_URL%.*}"
+              FILENAME_EXT="${FILENAME_FROM_URL##*.}"
+              if [ "$FILENAME_BASE" = "$FILENAME_FROM_URL" ]; then
+                FILENAME_EXT=""
+              fi
+
+              PREFIX="sci-hub.ir"
+
+              if [ "$total" -gt 1 ]; then
+                NUM=$(printf '%02d' $counter)
+                DL_NAME="${PREFIX}_${NUM}_${FILENAME_BASE}"
+              else
+                DL_NAME="${PREFIX}_${FILENAME_BASE}"
+              fi
+
+              MAXLEN=50
+              if [ ${#DL_NAME} -gt $MAXLEN ]; then
+                if [ "$total" -gt 1 ]; then
+                  KEEP=$((MAXLEN - ${#PREFIX} - 4))
+                else
+                  KEEP=$((MAXLEN - ${#PREFIX} - 1))
+                fi
+                DL_NAME="${DL_NAME:0:$MAXLEN}"
+              fi
+
+              if [ -n "$FILENAME_EXT" ]; then
+                FINAL_FILENAME="${DL_NAME}.${FILENAME_EXT}"
+              else
+                FINAL_FILENAME="${DL_NAME}"
+              fi
+
+              echo "Download filename: ${FINAL_FILENAME}"
+
+              if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FINAL_FILENAME}" "$url"; then
+                size=$(ls -lh "files/${FINAL_FILENAME}" | awk '{print $5}')
+                echo "Downloaded: ${FINAL_FILENAME} ($size)"
+                success=$((success + 1))
+              else
+                echo "Failed: $url"
+              fi
             fi
 
             counter=$((counter + 1))
