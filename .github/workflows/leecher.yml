@@ -89,7 +89,6 @@ jobs:
           counter=1
           YT_QUALITY="${{ github.event.inputs.youtube_quality }}"
           
-          # Process each URL
           for url in "${{ github.event.inputs.file_url_1 }}" "${{ github.event.inputs.file_url_2 }}" "${{ github.event.inputs.file_url_3 }}" "${{ github.event.inputs.file_url_4 }}" "${{ github.event.inputs.file_url_5 }}"; do
             if [ -z "$url" ]; then
               continue
@@ -136,17 +135,14 @@ jobs:
           
           echo "success_count=${success}" >> $GITHUB_OUTPUT
 
-      - name: Create zip archive (no splitting)
+      - name: Create single archive (no splitting)
         id: archive
         run: |
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
           mkdir -p "downloads_${TIMESTAMP}"
+          mv downloads/* "downloads_${TIMESTAMP}/" 2>/dev/null || true
           PASSWORD="${{ github.event.inputs.zip_password }}"
           
-          # Move files to timestamped folder
-          mv downloads/* "downloads_${TIMESTAMP}/" 2>/dev/null || true
-          
-          # Create a single zip file
           if [ -n "$PASSWORD" ]; then
             7z a -p"$PASSWORD" -mx=3 "archive_${TIMESTAMP}.7z" "downloads_${TIMESTAMP}/"
           else
@@ -154,8 +150,6 @@ jobs:
           fi
           
           echo "archive_name=archive_${TIMESTAMP}.7z" >> $GITHUB_OUTPUT
-          echo "folder=downloads_${TIMESTAMP}" >> $GITHUB_OUTPUT
-          
           rm -rf "downloads_${TIMESTAMP}"
 
       - name: Commit and Push
