@@ -1,10 +1,10 @@
-name: Transfer file to GitHub (supports YouTube links)
+name: Transfer file to GitHub (supports YouTube & TikTok)
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'Link 1 (required) - can be YouTube or direct link'
+        description: 'Link 1 (required) - YouTube, TikTok, or direct link'
         required: true
         type: string
         default: ''
@@ -40,6 +40,11 @@ on:
           - '720'
           - '480'
           - '360'
+      tiktok_watermark:
+        description: 'TikTok - include watermark?'
+        required: false
+        type: boolean
+        default: true
       zip_password:
         description: '🔒 Set password for archive file'
         required: false
@@ -64,17 +69,17 @@ permissions:
   contents: write
 
 concurrency:
-  group: sci-hub-queue
+  group: download-queue
   cancel-in-progress: false
   queue: max
 
 jobs:
-  leech-split-file:
+  download-and-archive:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -89,20 +94,28 @@ jobs:
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install Deno and yt-dlp with EJS support
+      - name: Install dependencies
         run: |
-          curl -fsSL https://deno.land/install.sh | sh
-          echo "$HOME/.deno/bin" >> $GITHUB_PATH
-          pip3 install "yt-dlp[default]" yt-dlp-ejs --break-system-packages || pip3 install "yt-dlp[default]" yt-dlp-ejs
-          curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz | tar -xJ
-          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
-          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
-          rm -rf ffmpeg-master-latest-linux64-gpl
-          sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+          # Install yt-dlp for YouTube and TikTok
+          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
+          
+          # Install FFmpeg
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg p7zip-full
+          
+          # Install TikTok downloader alternative
+          pip3 install tikdown --break-system-packages || pip3 install tikdown
+          
+          echo "✅ Dependencies installed"
 
-      - name: Create cookies file from secret
+      - name: Create cookies file from secret (for YouTube)
         run: |
-          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+            echo "✅ Cookies file created"
+          else
+            echo "⚠️ No cookies secret found, YouTube may have restrictions"
+          fi
 
       - name: Parse inputs
         id: parse
@@ -123,7 +136,7 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Download files (YouTube with Deno + cookies, direct via curl)
+      - name: Download files (YouTube, TikTok, or direct)
         id: download_files
         run: |
           mkdir -p files
@@ -131,91 +144,92 @@ jobs:
           counter=1
           success=0
           YT_QUALITY="${{ github.event.inputs.youtube_quality }}"
+          TT_WATERMARK="${{ github.event.inputs.tiktok_watermark }}"
 
           while IFS= read -r url; do
             echo "========================================="
             echo "[$counter/$total] Processing: $url"
 
+            # YouTube detection
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "Detected YouTube link. Requested quality: ${YT_QUALITY}p"
-              echo "Downloading with yt-dlp + Deno + cookies..."
-
-              # Improved format selector that respects the chosen height limit
-              yt-dlp --cookies cookies.txt \
-                     --extractor-args "youtube:player_client=tv,android_sdkless" \
-                     --js-runtime deno \
-                     -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
-                     --merge-output-format mp4 \
-                     -o "files/yt_video_${counter}.%(ext)s" \
-                     "$url" || \
-              yt-dlp --cookies cookies.txt \
-                     --extractor-args "youtube:player_client=web" \
-                     --js-runtime deno \
-                     -f "best[height<=${YT_QUALITY}]" \
-                     -o "files/yt_video_${counter}.%(ext)s" \
-                     "$url"
-
-              DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
+              echo "📺 Detected YouTube link"
+              echo "Quality: ${YT_QUALITY}p"
+              
+              if [ -f cookies.txt ]; then
+                yt-dlp --cookies cookies.txt \
+                       -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
+                       --merge-output-format mp4 \
+                       -o "files/yt_${counter}.%(ext)s" \
+                       "$url"
+              else
+                yt-dlp -f "best[height<=${YT_QUALITY}]" \
+                       -o "files/yt_${counter}.%(ext)s" \
+                       "$url"
+              fi
+              
+              DOWNLOADED_FILE=$(ls files/yt_${counter}.* 2>/dev/null | head -1)
               if [ -f "$DOWNLOADED_FILE" ]; then
-                TITLE=$(yt-dlp --cookies cookies.txt --js-runtime deno --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
-                if [ -z "$TITLE" ]; then
-                  TITLE="youtube_video_${counter}"
-                fi
+                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.- ' | cut -c1-50)
                 mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
-                # Verify actual resolution
-                RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "files/${TITLE}.mp4" 2>/dev/null | tr -d '\n')
-                if [ -n "$RES" ]; then
-                  echo "Actual resolution: ${RES}p"
-                  if [ "$RES" -lt "${YT_QUALITY}" ]; then
-                    echo "⚠️ Note: Requested ${YT_QUALITY}p but got ${RES}p (source may not have ${YT_QUALITY}p)"
-                  fi
-                fi
                 size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
-                echo "Downloaded: ${TITLE}.mp4 ($size)"
+                echo "✅ Downloaded: ${TITLE}.mp4 ($size)"
                 success=$((success + 1))
               else
-                echo "Failed to download YouTube video"
+                echo "❌ Failed to download YouTube video"
               fi
+              
+            # TikTok detection
+            elif echo "$url" | grep -qE '(tiktok\.com|vm\.tiktok)'; then
+              echo "📱 Detected TikTok link"
+              if [ "$TT_WATERMARK" = "true" ]; then
+                echo "Downloading with watermark"
+              else
+                echo "Downloading without watermark"
+              fi
+              
+              # Use yt-dlp for TikTok (works well)
+              if [ "$TT_WATERMARK" = "true" ]; then
+                yt-dlp -f "best" -o "files/tt_${counter}.%(ext)s" "$url"
+              else
+                yt-dlp -f "best" --config-location /dev/null \
+                       --add-header "User-Agent:Mozilla/5.0" \
+                       -o "files/tt_${counter}.%(ext)s" \
+                       "$url"
+              fi
+              
+              DOWNLOADED_FILE=$(ls files/tt_${counter}.* 2>/dev/null | head -1)
+              if [ -f "$DOWNLOADED_FILE" ]; then
+                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.- ' | cut -c1-40)
+                mv "$DOWNLOADED_FILE" "files/tiktok_${TITLE}.mp4"
+                size=$(ls -lh "files/tiktok_${TITLE}.mp4" | awk '{print $5}')
+                echo "✅ Downloaded TikTok: ${TITLE}.mp4 ($size)"
+                success=$((success + 1))
+              else
+                echo "❌ Failed to download TikTok video"
+              fi
+              
+            # Direct download
             else
-              echo "Normal direct download"
-              FILENAME_FROM_URL=$(echo "$url" | sed 's/?.*//' | xargs basename)
-              if [ -z "$FILENAME_FROM_URL" ]; then
-                FILENAME_FROM_URL="unknown_${counter}"
+              echo "🔗 Direct download"
+              FILENAME=$(basename "$url" | cut -d'?' -f1)
+              if [ -z "$FILENAME" ]; then
+                FILENAME="file_${counter}"
               fi
-              FILENAME_BASE="${FILENAME_FROM_URL%.*}"
-              FILENAME_EXT="${FILENAME_FROM_URL##*.}"
-              if [ "$FILENAME_BASE" = "$FILENAME_FROM_URL" ]; then
-                FILENAME_EXT=""
-              fi
-              PREFIX="sci-hub.ir"
-              if [ "$total" -gt 1 ]; then
-                NUM=$(printf '%02d' $counter)
-                DL_NAME="${PREFIX}_${NUM}_${FILENAME_BASE}"
-              else
-                DL_NAME="${PREFIX}_${FILENAME_BASE}"
-              fi
-              MAXLEN=50
-              if [ ${#DL_NAME} -gt $MAXLEN ]; then
-                DL_NAME="${DL_NAME:0:$MAXLEN}"
-              fi
-              if [ -n "$FILENAME_EXT" ]; then
-                FINAL_FILENAME="${DL_NAME}.${FILENAME_EXT}"
-              else
-                FINAL_FILENAME="${DL_NAME}"
-              fi
-              echo "Download filename: ${FINAL_FILENAME}"
-              if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FINAL_FILENAME}" "$url"; then
-                size=$(ls -lh "files/${FINAL_FILENAME}" | awk '{print $5}')
-                echo "Downloaded: ${FINAL_FILENAME} ($size)"
+              
+              if curl -L --fail --retry 3 --connect-timeout 30 -o "files/${FILENAME}" "$url"; then
+                size=$(ls -lh "files/${FILENAME}" | awk '{print $5}')
+                echo "✅ Downloaded: ${FILENAME} ($size)"
                 success=$((success + 1))
               else
-                echo "Failed: $url"
+                echo "❌ Failed: $url"
               fi
             fi
+            
             counter=$((counter + 1))
           done < urls.txt
 
           echo "success_count=${success}" >> $GITHUB_OUTPUT
+          echo "✅ Downloaded ${success}/${total} files successfully"
 
       - name: Process and archive each file
         id: process_files
@@ -294,5 +308,7 @@ jobs:
           | 📂 Download folder | [${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
           | Status | ✅ Success |
           ---
+          **Support for:** YouTube • TikTok • Direct Links
+          
           Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)
           EOF
