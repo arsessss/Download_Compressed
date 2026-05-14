@@ -1,171 +1,66 @@
-name: Transfer file to GitHub (supports YouTube & TikTok)
+name: Debug YouTube Download
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'Link 1 (required) - YouTube, TikTok, or direct link'
+        description: 'YouTube URL'
         required: true
         type: string
-        default: ''
-      file_url_2:
-        description: 'Link 2 (optional)'
-        required: false
-        type: string
-        default: ''
-      file_url_3:
-        description: 'Link 3 (optional)'
-        required: false
-        type: string
-        default: ''
-      file_url_4:
-        description: 'Link 4 (optional)'
-        required: false
-        type: string
-        default: ''
-      file_url_5:
-        description: 'Link 5 (optional)'
-        required: false
-        type: string
-        default: ''
       youtube_quality:
-        description: 'Quality for YouTube links'
+        description: 'Quality'
         required: false
         type: choice
-        default: '1080'
+        default: '720'
         options:
-          - '2160'
-          - '1440'
           - '1080'
           - '720'
           - '480'
-          - '360'
-      tiktok_watermark:
-        description: 'TikTok - include watermark?'
-        required: false
-        type: boolean
-        default: true
-      zip_password:
-        description: '🔒 Set password for archive file'
-        required: false
-        type: string
-        default: ''
 
 permissions:
   contents: write
 
-concurrency:
-  group: download-queue
-  cancel-in-progress: false
-  queue: max
-
 jobs:
-  download-and-archive:
+  debug:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Install dependencies
+      - name: Install yt-dlp
         run: |
-          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg p7zip-full
-
-      - name: Create cookies file
-        run: |
-          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
-            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-          fi
-
-      - name: Download files
-        id: download_files
-        run: |
-          mkdir -p downloads
-          success=0
-          counter=1
-          YT_QUALITY="${{ github.event.inputs.youtube_quality }}"
+          pip3 install yt-dlp
           
-          for url in "${{ github.event.inputs.file_url_1 }}" "${{ github.event.inputs.file_url_2 }}" "${{ github.event.inputs.file_url_3 }}" "${{ github.event.inputs.file_url_4 }}" "${{ github.event.inputs.file_url_5 }}"; do
-            if [ -z "$url" ]; then
-              continue
-            fi
-            
-            echo "Processing [$counter]: $url"
-            
-            if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "📺 YouTube"
-              if [ -f cookies.txt ]; then
-                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
-              else
-                yt-dlp -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
-              fi
-              if [ -f "downloads/video_${counter}.mp4" ]; then
-                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-50)
-                mv "downloads/video_${counter}.mp4" "downloads/${TITLE}.mp4"
-                echo "✅ Downloaded: ${TITLE}.mp4"
-                success=$((success + 1))
-              fi
-              
-            elif echo "$url" | grep -qE '(tiktok\.com|vm\.tiktok)'; then
-              echo "📱 TikTok"
-              yt-dlp -f "best" -o "downloads/tiktok_${counter}.mp4" "$url"
-              if [ -f "downloads/tiktok_${counter}.mp4" ]; then
-                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-40)
-                mv "downloads/tiktok_${counter}.mp4" "downloads/${TITLE}.mp4"
-                echo "✅ Downloaded: ${TITLE}.mp4"
-                success=$((success + 1))
-              fi
-              
-            else
-              echo "🔗 Direct"
-              FILENAME=$(basename "$url" | cut -d'?' -f1)
-              curl -L --fail -o "downloads/${FILENAME}" "$url"
-              if [ -f "downloads/${FILENAME}" ]; then
-                echo "✅ Downloaded: ${FILENAME}"
-                success=$((success + 1))
-              fi
-            fi
-            
-            counter=$((counter + 1))
-          done
-          
-          echo "success_count=${success}" >> $GITHUB_OUTPUT
-
-      - name: Create single archive (no splitting)
-        id: archive
+      - name: Check if video exists
         run: |
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          mkdir -p "downloads_${TIMESTAMP}"
-          mv downloads/* "downloads_${TIMESTAMP}/" 2>/dev/null || true
-          PASSWORD="${{ github.event.inputs.zip_password }}"
+          URL="${{ github.event.inputs.file_url_1 }}"
           
-          if [ -n "$PASSWORD" ]; then
-            7z a -p"$PASSWORD" -mx=3 "archive_${TIMESTAMP}.7z" "downloads_${TIMESTAMP}/"
+          echo "Checking: $URL"
+          
+          # Try to get video info
+          yt-dlp --dump-json --skip-download "$URL" 2>&1
+          
+      - name: Try download with cookies
+        if: ${{ secrets.YT_COOKIES != '' }}
+        run: |
+          URL="${{ github.event.inputs.file_url_1 }}"
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          
+          yt-dlp --cookies cookies.txt -f "best" -o "video.mp4" "$URL"
+          
+          if [ -f "video.mp4" ]; then
+            echo "✅ Download successful!"
+            ls -la video.mp4
           else
-            7z a -mx=3 "archive_${TIMESTAMP}.7z" "downloads_${TIMESTAMP}/"
+            echo "❌ Download failed"
           fi
           
-          echo "archive_name=archive_${TIMESTAMP}.7z" >> $GITHUB_OUTPUT
-          rm -rf "downloads_${TIMESTAMP}"
-
-      - name: Commit and Push
+      - name: Try download without cookies
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.7z 2>/dev/null || true
-          if ! git diff --staged --quiet; then
-            git commit -m "Add archive ${{ steps.archive.outputs.archive_name }}"
-            git push origin main
+          URL="${{ github.event.inputs.file_url_1 }}"
+          
+          yt-dlp -f "best" -o "video2.mp4" "$URL"
+          
+          if [ -f "video2.mp4" ]; then
+            echo "✅ Download successful without cookies!"
+            ls -la video2.mp4
+          else
+            echo "❌ Download failed without cookies"
           fi
-
-      - name: Summary
-        run: |
-          echo "## ✅ Download Complete" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Successful downloads | ${{ steps.download_files.outputs.success_count }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Archive | ${{ steps.archive.outputs.archive_name }} |" >> $GITHUB_STEP_SUMMARY
