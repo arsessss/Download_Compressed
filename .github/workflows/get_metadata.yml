@@ -1,0 +1,123 @@
+name: Get Video Metadata (YouTube & TikTok)
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'YouTube or TikTok Video URL'
+        required: true
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  get-metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      title: ${{ steps.metadata.outputs.title }}
+      thumbnail: ${{ steps.metadata.outputs.thumbnail }}
+      duration: ${{ steps.metadata.outputs.duration }}
+      author: ${{ steps.metadata.outputs.author }}
+      platform: ${{ steps.metadata.outputs.platform }}
+      video_id: ${{ steps.metadata.outputs.video_id }}
+      success: ${{ steps.metadata.outputs.success }}
+      
+    steps:
+      - name: Install yt-dlp
+        run: |
+          pip3 install yt-dlp
+        
+      - name: Extract video metadata
+        id: metadata
+        run: |
+          VIDEO_URL="${{ github.event.inputs.video_url }}"
+          
+          # Detect platform
+          if echo "$VIDEO_URL" | grep -qiE '(youtube\.com|youtu\.be)'; then
+            PLATFORM="youtube"
+            # Extract YouTube video ID
+            VIDEO_ID=$(echo "$VIDEO_URL" | grep -oE '(v=|be/|embed/|youtu.be/)([a-zA-Z0-9_-]{11})' | head -1 | sed 's/.*=//;s/.*\///')
+          elif echo "$VIDEO_URL" | grep -qiE '(tiktok\.com|vm\.tiktok)'; then
+            PLATFORM="tiktok"
+            # Extract TikTok video ID
+            VIDEO_ID=$(echo "$VIDEO_URL" | grep -oE '/video/([0-9]+)' | head -1 | sed 's/\/video\///')
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "error=Unsupported platform" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          if [ -z "$VIDEO_ID" ]; then
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "error=Failed to extract video ID" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Get metadata using yt-dlp
+          METADATA=$(yt-dlp --skip-download --print "%title|%duration|%thumbnail|%uploader" "$VIDEO_URL" 2>/dev/null)
+          
+          TITLE=$(echo "$METADATA" | cut -d'|' -f1)
+          DURATION=$(echo "$METADATA" | cut -d'|' -f2)
+          THUMBNAIL_URL=$(echo "$METADATA" | cut -d'|' -f3)
+          AUTHOR=$(echo "$METADATA" | cut -d'|' -f4)
+          
+          # Clean up title (remove special chars, limit length)
+          CLEAN_TITLE=$(echo "$TITLE" | sed 's/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s\-_]//g' | cut -c1-100)
+          
+          # Set thumbnail URLs based on platform
+          if [ "$PLATFORM" = "youtube" ]; then
+            THUMBNAIL_1="https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg"
+            THUMBNAIL_2="https://i.ytimg.com/vi/${VIDEO_ID}/mqdefault.jpg"
+            THUMBNAIL_3="https://i.ytimg.com/vi/${VIDEO_ID}/default.jpg"
+          else
+            # TikTok thumbnails - use original from metadata or fallback
+            THUMBNAIL_1="$THUMBNAIL_URL"
+            THUMBNAIL_2="https://via.placeholder.com/60x45/1a1a1a/ffffff?text=TikTok"
+            THUMBNAIL_3="https://via.placeholder.com/60x45/1a1a1a/ffffff?text=TT"
+          fi
+          
+          # Format duration from seconds to MM:SS
+          if [[ "$DURATION" =~ ^[0-9]+$ ]]; then
+            MINUTES=$((DURATION / 60))
+            SECONDS=$((DURATION % 60))
+            FORMATTED_DURATION=$(printf "%02d:%02d" $MINUTES $SECONDS)
+          else
+            FORMATTED_DURATION="Unknown"
+          fi
+          
+          # Clean author name
+          CLEAN_AUTHOR=$(echo "$AUTHOR" | cut -c1-50)
+          
+          echo "title=${CLEAN_TITLE}" >> $GITHUB_OUTPUT
+          echo "thumbnail=${THUMBNAIL_1}" >> $GITHUB_OUTPUT
+          echo "duration=${FORMATTED_DURATION}" >> $GITHUB_OUTPUT
+          echo "author=${CLEAN_AUTHOR}" >> $GITHUB_OUTPUT
+          echo "platform=${PLATFORM}" >> $GITHUB_OUTPUT
+          echo "video_id=${VIDEO_ID}" >> $GITHUB_OUTPUT
+          echo "success=true" >> $GITHUB_OUTPUT
+          
+          echo "✅ Platform: ${PLATFORM}"
+          echo "📝 Title: ${CLEAN_TITLE}"
+          echo "👤 Author: ${CLEAN_AUTHOR}"
+          echo "📸 Thumbnail: ${THUMBNAIL_1}"
+          echo "⏱️ Duration: ${FORMATTED_DURATION}"
+          
+      - name: Return metadata as JSON
+        id: json_output
+        run: |
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          ## 📹 Video Metadata
+          
+          | Field | Value |
+          |-------|-------|
+          | **Platform** | ${{ steps.metadata.outputs.platform }} |
+          | **Title** | ${{ steps.metadata.outputs.title }} |
+          | **Author** | ${{ steps.metadata.outputs.author }} |
+          | **Duration** | ${{ steps.metadata.outputs.duration }} |
+          | **Video ID** | ${{ steps.metadata.outputs.video_id }} |
+          | **Thumbnail** | ![Thumbnail](${{ steps.metadata.outputs.thumbnail }}) |
+          
+          ---
+          EOF
