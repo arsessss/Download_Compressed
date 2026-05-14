@@ -15,19 +15,19 @@ jobs:
       title: ${{ steps.metadata.outputs.title }}
       thumbnail: ${{ steps.metadata.outputs.thumbnail }}
       duration: ${{ steps.metadata.outputs.duration }}
-      author: ${{ steps.metadata.outputs.author }}
-      platform: ${{ steps.metadata.outputs.platform }}
-      success: ${{ steps.metadata.outputs.success }}
+      uploader: ${{ steps.metadata.outputs.uploader }}
       
     steps:
       - name: Install yt-dlp
         run: |
-          pip3 install yt-dlp
+          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
           
       - name: Get video metadata
         id: metadata
         run: |
           URL="${{ github.event.inputs.video_url }}"
+          
+          echo "Processing URL: $URL"
           
           # Get metadata using yt-dlp
           TITLE=$(yt-dlp --skip-download --get-title "$URL" 2>/dev/null | head -1)
@@ -35,27 +35,29 @@ jobs:
           DURATION=$(yt-dlp --skip-download --get-duration "$URL" 2>/dev/null | head -1)
           UPLOADER=$(yt-dlp --skip-download --get-uploader "$URL" 2>/dev/null | head -1)
           
-          # Detect platform
+          # Fallbacks
+          if [ -z "$TITLE" ]; then TITLE="Unknown Title"; fi
+          if [ -z "$DURATION" ]; then DURATION="Unknown"; fi
+          if [ -z "$UPLOADER" ]; then UPLOADER="Unknown"; fi
+          
+          # For YouTube, create fallback thumbnail
           if echo "$URL" | grep -qiE '(youtube|youtu.be)'; then
-            PLATFORM="youtube"
-            # Extract video ID for fallback thumbnail
             VIDEO_ID=$(echo "$URL" | grep -oE '(v=|be/|youtu.be/)([a-zA-Z0-9_-]{11})' | head -1 | sed 's/.*=//;s/.*\///')
-            if [ -z "$THUMBNAIL" ]; then
+            if [ -z "$THUMBNAIL" ] && [ -n "$VIDEO_ID" ]; then
               THUMBNAIL="https://img.youtube.com/vi/${VIDEO_ID}/hqdefault.jpg"
             fi
-          else
-            PLATFORM="tiktok"
           fi
           
-          # Clean and set outputs
-          echo "title=${TITLE:-Unknown}" >> $GITHUB_OUTPUT
-          echo "thumbnail=${THUMBNAIL:-}" >> $GITHUB_OUTPUT
-          echo "duration=${DURATION:-Unknown}" >> $GITHUB_OUTPUT
-          echo "author=${UPLOADER:-Unknown}" >> $GITHUB_OUTPUT
-          echo "platform=${PLATFORM}" >> $GITHUB_OUTPUT
-          echo "success=true" >> $GITHUB_OUTPUT
+          if [ -z "$THUMBNAIL" ]; then
+            THUMBNAIL="https://via.placeholder.com/120x90/1a1a1a/ffffff?text=No+Thumb"
+          fi
+          
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "thumbnail=$THUMBNAIL" >> $GITHUB_OUTPUT
+          echo "duration=$DURATION" >> $GITHUB_OUTPUT
+          echo "uploader=$UPLOADER" >> $GITHUB_OUTPUT
           
           echo "✅ Title: $TITLE"
           echo "📸 Thumbnail: $THUMBNAIL"
           echo "⏱️ Duration: $DURATION"
-          echo "👤 Author: $UPLOADER"
+          echo "👤 Uploader: $UPLOADER"
