@@ -51,7 +51,7 @@ on:
         type: string
         default: ''
       split_size:
-        description: 'Maximum size per chunk (MB)'
+        description: 'Maximum size per chunk (MB) - only splits files larger than this'
         required: false
         type: choice
         default: '95'
@@ -60,7 +60,7 @@ on:
           - '50'
           - '95'
       delete_old_archives:
-        description: 'Delete old archives (if checked, all previous archives will be removed)'
+        description: 'Delete old archives'
         required: false
         type: boolean
         default: false
@@ -92,26 +92,17 @@ jobs:
           git rm --cached *.7z.* 2>/dev/null || true
           git rm --cached *.7z 2>/dev/null || true
           git rm --cached -r downloads 2>/dev/null || true
-          echo "Old archives cleaned."
 
       - name: Install dependencies
         run: |
-          # Install yt-dlp for YouTube and TikTok
           pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
-          
-          # Install FFmpeg
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg p7zip-full
-          
-          echo "✅ Dependencies installed"
 
-      - name: Create cookies file from secret (for YouTube)
+      - name: Create cookies file
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "✅ Cookies file created"
-          else
-            echo "⚠️ No cookies secret found, YouTube may have restrictions"
           fi
 
       - name: Parse inputs
@@ -127,13 +118,10 @@ jobs:
           ${{ github.event.inputs.file_url_5 }}
           URLEOF
           sed -i '/^$/d' urls.txt
-          sed -i 's/^[ \t]*//;s/[ \t]*$//' urls.txt
           total=$(wc -l < urls.txt)
           echo "url_count=${total}" >> $GITHUB_OUTPUT
-          echo "URL count: ${total}"
-          cat -n urls.txt
 
-      - name: Download files (YouTube, TikTok, or direct)
+      - name: Download files
         id: download_files
         run: |
           mkdir -p files
@@ -144,92 +132,42 @@ jobs:
           TT_WATERMARK="${{ github.event.inputs.tiktok_watermark }}"
 
           while IFS= read -r url; do
-            echo "========================================="
             echo "[$counter/$total] Processing: $url"
 
-            # YouTube detection
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "📺 Detected YouTube link"
-              echo "Quality: ${YT_QUALITY}p"
-              
+              echo "📺 YouTube"
               if [ -f cookies.txt ]; then
-                yt-dlp --cookies cookies.txt \
-                       -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
-                       --merge-output-format mp4 \
-                       -o "files/yt_${counter}.%(ext)s" \
-                       "$url"
+                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "files/video_${counter}.mp4" "$url"
               else
-                yt-dlp -f "best[height<=${YT_QUALITY}]" \
-                       -o "files/yt_${counter}.%(ext)s" \
-                       "$url"
+                yt-dlp -f "best[height<=${YT_QUALITY}]" -o "files/video_${counter}.mp4" "$url"
               fi
-              
-              DOWNLOADED_FILE=$(ls files/yt_${counter}.* 2>/dev/null | head -1)
-              if [ -f "$DOWNLOADED_FILE" ]; then
+              if [ -f "files/video_${counter}.mp4" ]; then
                 TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.- ' | cut -c1-50)
-                if [ -z "$TITLE" ]; then
-                  TITLE="youtube_video_${counter}"
-                fi
-                mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
-                size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
-                echo "✅ Downloaded: ${TITLE}.mp4 ($size)"
+                mv "files/video_${counter}.mp4" "files/${TITLE}.mp4"
                 success=$((success + 1))
-              else
-                echo "❌ Failed to download YouTube video"
               fi
               
-            # TikTok detection
             elif echo "$url" | grep -qE '(tiktok\.com|vm\.tiktok)'; then
-              echo "📱 Detected TikTok link"
-              if [ "$TT_WATERMARK" = "true" ]; then
-                echo "Downloading WITH watermark"
-                yt-dlp -f "best" -o "files/tt_${counter}.%(ext)s" "$url"
-              else
-                echo "Downloading WITHOUT watermark"
-                yt-dlp -f "best" --config-location /dev/null \
-                       --add-header "User-Agent:Mozilla/5.0" \
-                       -o "files/tt_${counter}.%(ext)s" \
-                       "$url"
-              fi
-              
-              DOWNLOADED_FILE=$(ls files/tt_${counter}.* 2>/dev/null | head -1)
-              if [ -f "$DOWNLOADED_FILE" ]; then
+              echo "📱 TikTok"
+              yt-dlp -f "best" -o "files/tiktok_${counter}.mp4" "$url"
+              if [ -f "files/tiktok_${counter}.mp4" ]; then
                 TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.- ' | cut -c1-40)
-                if [ -z "$TITLE" ]; then
-                  TITLE="tiktok_video_${counter}"
-                fi
-                mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
-                size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
-                echo "✅ Downloaded TikTok: ${TITLE}.mp4 ($size)"
+                mv "files/tiktok_${counter}.mp4" "files/${TITLE}.mp4"
                 success=$((success + 1))
-              else
-                echo "❌ Failed to download TikTok video"
               fi
               
-            # Direct download
             else
-              echo "🔗 Direct download"
+              echo "🔗 Direct"
               FILENAME=$(basename "$url" | cut -d'?' -f1)
-              if [ -z "$FILENAME" ]; then
-                FILENAME="file_${counter}"
-              fi
-              
-              if curl -L --fail --retry 3 --connect-timeout 30 -o "files/${FILENAME}" "$url"; then
-                size=$(ls -lh "files/${FILENAME}" | awk '{print $5}')
-                echo "✅ Downloaded: ${FILENAME} ($size)"
-                success=$((success + 1))
-              else
-                echo "❌ Failed: $url"
-              fi
+              curl -L --fail -o "files/${FILENAME}" "$url" && success=$((success + 1))
             fi
             
             counter=$((counter + 1))
           done < urls.txt
 
           echo "success_count=${success}" >> $GITHUB_OUTPUT
-          echo "✅ Downloaded ${success}/${total} files successfully"
 
-      - name: Process and archive each file
+      - name: Archive files (only split if needed)
         id: process_files
         run: |
           SPLIT_MB=${{ steps.parse.outputs.split_mb }}
@@ -238,24 +176,38 @@ jobs:
           mkdir -p "$FOLDER"
           PASSWORD="${{ github.event.inputs.zip_password }}"
 
-          echo "Output folder: ${FOLDER}"
-          echo "Split size: ${SPLIT_MB}MB"
-
           counter=0
           for file in files/*; do
             [ -f "$file" ] || continue
             counter=$((counter + 1))
-            echo "Processing: $(basename "$file")"
-            FILENAME=$(basename "$file")
-            if [ "${#PASSWORD}" -gt 0 ]; then
-              7z a -p"$PASSWORD" -mhe=on -mx=3 -v${SPLIT_MB}m "${FOLDER}/${FILENAME}.7z" "$file"
+            BASENAME=$(basename "$file")
+            NAME="${BASENAME%.*}"
+            SIZE_MB=$(du -m "$file" | cut -f1)
+            
+            echo "Processing: $BASENAME (${SIZE_MB} MB)"
+            
+            # Only split if file is larger than split size
+            if [ "$SIZE_MB" -gt "$SPLIT_MB" ]; then
+              echo "File > ${SPLIT_MB}MB - splitting into ${SPLIT_MB}MB parts"
+              if [ -n "$PASSWORD" ]; then
+                7z a -p"$PASSWORD" -mhe=on -mx=3 -v${SPLIT_MB}m "${FOLDER}/${NAME}.7z" "$file"
+              else
+                7z a -mx=3 -v${SPLIT_MB}m "${FOLDER}/${NAME}.7z" "$file"
+              fi
+              # If only one part was created, rename it
+              if [ -f "${FOLDER}/${NAME}.7z.001" ] && [ ! -f "${FOLDER}/${NAME}.7z.002" ]; then
+                mv "${FOLDER}/${NAME}.7z.001" "${FOLDER}/${NAME}.7z"
+              fi
             else
-              7z a -mx=3 -v${SPLIT_MB}m "${FOLDER}/${FILENAME}.7z" "$file"
-            fi
-            if [ -f "${FOLDER}/${FILENAME}.7z.001" ] && [ ! -f "${FOLDER}/${FILENAME}.7z.002" ]; then
-              mv "${FOLDER}/${FILENAME}.7z.001" "${FOLDER}/${FILENAME}.7z"
+              echo "File ≤ ${SPLIT_MB}MB - no split needed"
+              if [ -n "$PASSWORD" ]; then
+                7z a -p"$PASSWORD" -mhe=on -mx=3 "${FOLDER}/${NAME}.7z" "$file"
+              else
+                7z a -mx=3 "${FOLDER}/${NAME}.7z" "$file"
+              fi
             fi
           done
+          
           rm -rf files
           echo "processed_count=${counter}" >> $GITHUB_OUTPUT
           echo "folder=${FOLDER}" >> $GITHUB_OUTPUT
@@ -266,47 +218,16 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
 
-      - name: Commit and Push all chunks
+      - name: Commit and Push
         run: |
           FOLDER="${{ steps.process_files.outputs.folder }}"
           git add "${FOLDER}/"*.7z* 2>/dev/null || true
           if ! git diff --staged --quiet; then
-            file_count=$(git diff --staged --name-only | wc -l)
-            git commit -m "Add files in ${FOLDER} (${file_count} chunks)"
-            push_success=false
-            max_attempts=15
-            for attempt in $(seq 1 $max_attempts); do
-              git pull --rebase origin main 2>/dev/null || true
-              if git push origin main; then
-                push_success=true
-                break
-              else
-                sleep 20
-              fi
-            done
-            if [ "$push_success" = false ]; then
-              exit 1
-            fi
+            git commit -m "Add files from ${FOLDER}"
+            git push origin main
           fi
 
       - name: Summary
         run: |
           FOLDER="${{ steps.process_files.outputs.folder }}"
-          TOTAL_SIZE=$(du -sh "$FOLDER" 2>/dev/null | awk '{print $1}')
-          [ -z "$TOTAL_SIZE" ] && TOTAL_SIZE="N/A"
-          echo "Job completed! Folder: $FOLDER, Size: $TOTAL_SIZE"
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 📊 Execution Summary
-          | Item | Value |
-          |------|-------|
-          | Successful downloads | ${{ steps.download_files.outputs.success_count }} / ${{ steps.parse.outputs.url_count }} |
-          | Files processed | ${{ steps.process_files.outputs.processed_count }} |
-          | Max chunk size | ${{ steps.parse.outputs.split_mb }} MB |
-          | Total size | ${TOTAL_SIZE} |
-          | 📂 Download folder | [${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
-          | Status | ✅ Success |
-          ---
-          **🎬 Supported platforms:** YouTube • TikTok • Direct Links
-          
-          Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)
-          EOF
+          echo "✅ Done! Folder: ${FOLDER}"
