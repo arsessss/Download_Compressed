@@ -54,11 +54,11 @@ on:
         description: 'Maximum size per chunk (MB)'
         required: false
         type: choice
-        default: '95  (maximum - for large files)'
+        default: '95'
         options:
-          - '25  (slow internet - small files)'
-          - '50  (medium)'
-          - '95  (maximum - for large files)'
+          - '25'
+          - '50'
+          - '95'
       delete_old_archives:
         description: 'Delete old archives (if checked, all previous archives will be removed)'
         required: false
@@ -117,8 +117,8 @@ jobs:
       - name: Parse inputs
         id: parse
         run: |
-          SIZE=$(echo "${{ github.event.inputs.split_size }}" | grep -oP '\d+')
-          echo "split_mb=${SIZE:-95}" >> $GITHUB_OUTPUT
+          SIZE="${{ github.event.inputs.split_size }}"
+          echo "split_mb=${SIZE}" >> $GITHUB_OUTPUT
           cat > urls.txt << URLEOF
           ${{ github.event.inputs.file_url_1 }}
           ${{ github.event.inputs.file_url_2 }}
@@ -167,6 +167,9 @@ jobs:
               DOWNLOADED_FILE=$(ls files/yt_${counter}.* 2>/dev/null | head -1)
               if [ -f "$DOWNLOADED_FILE" ]; then
                 TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.- ' | cut -c1-50)
+                if [ -z "$TITLE" ]; then
+                  TITLE="youtube_video_${counter}"
+                fi
                 mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
                 size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
                 echo "✅ Downloaded: ${TITLE}.mp4 ($size)"
