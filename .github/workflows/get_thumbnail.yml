@@ -1,0 +1,119 @@
+name: Get Video Thumbnail
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'YouTube or TikTok URL'
+        required: true
+        type: string
+
+jobs:
+  get-thumbnail:
+    runs-on: ubuntu-latest
+    outputs:
+      thumbnail_data: ${{ steps.thumbnail.outputs.thumbnail_data }}
+      title: ${{ steps.metadata.outputs.title }}
+      duration: ${{ steps.metadata.outputs.duration }}
+      uploader: ${{ steps.metadata.outputs.uploader }}
+      
+    steps:
+      - name: Install yt-dlp and curl
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install yt-dlp
+          sudo apt-get update
+          sudo apt-get install -y curl
+          
+      - name: Get video metadata and thumbnail
+        id: metadata
+        run: |
+          URL="${{ github.event.inputs.video_url }}"
+          
+          echo "Processing URL: $URL"
+          
+          # Get metadata using yt-dlp
+          TITLE=$(python3 -m yt_dlp --skip-download --get-title "$URL" 2>/dev/null | head -1)
+          DURATION=$(python3 -m yt_dlp --skip-download --get-duration "$URL" 2>/dev/null | head -1)
+          UPLOADER=$(python3 -m yt_dlp --skip-download --get-uploader "$URL" 2>/dev/null | head -1)
+          THUMBNAIL_URL=$(python3 -m yt_dlp --skip-download --get-thumbnail "$URL" 2>/dev/null | head -1)
+          
+          # Extract video ID for YouTube
+          VIDEO_ID=""
+          if echo "$URL" | grep -qiE '(youtube|youtu.be)'; then
+            VIDEO_ID=$(echo "$URL" | grep -oE '(v=|be/|youtu.be/)([a-zA-Z0-9_-]{11})' | head -1 | sed 's/.*=//;s/.*\///')
+            if [ -z "$THUMBNAIL_URL" ]; then
+              THUMBNAIL_URL="https://img.youtube.com/vi/${VIDEO_ID}/hqdefault.jpg"
+            fi
+          fi
+          
+          # Fallbacks if empty
+          if [ -z "$TITLE" ]; then 
+            TITLE="Unknown Title"
+          fi
+          
+          if [ -z "$DURATION" ] || [ "$DURATION" = "NA" ]; then 
+            DURATION="Unknown"
+          fi
+          
+          if [ -z "$UPLOADER" ]; then 
+            UPLOADER="Unknown"
+          fi
+          
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "duration=$DURATION" >> $GITHUB_OUTPUT
+          echo "uploader=$UPLOADER" >> $GITHUB_OUTPUT
+          echo "thumbnail_url=$THUMBNAIL_URL" >> $GITHUB_OUTPUT
+          
+      - name: Download and convert thumbnail to base64
+        id: thumbnail
+        run: |
+          THUMB_URL="${{ steps.metadata.outputs.thumbnail_url }}"
+          
+          echo "Downloading thumbnail from: $THUMB_URL"
+          
+          # Try multiple thumbnail URLs
+          THUMB_DATA=""
+          
+          # Try the main URL
+          if curl -s -L --max-time 10 "$THUMB_URL" -o /tmp/thumb.jpg 2>/dev/null; then
+            if [ -f /tmp/thumb.jpg ] && [ -s /tmp/thumb.jpg ]; then
+              THUMB_DATA=$(base64 -w 0 /tmp/thumb.jpg)
+              echo "✅ Downloaded thumbnail successfully"
+            fi
+          fi
+          
+          # If failed and it's YouTube, try alternative CDNs
+          if [ -z "$THUMB_DATA" ] && [ -n "$VIDEO_ID" ]; then
+            for alt_url in "https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg" "https://i.ytimg.com/vi_webp/${VIDEO_ID}/hqdefault.webp" "https://yt3.ggpht.com/ytc/${VIDEO_ID}/hqdefault.jpg"; do
+              if curl -s -L --max-time 10 "$alt_url" -o /tmp/thumb.jpg 2>/dev/null; then
+                if [ -f /tmp/thumb.jpg ] && [ -s /tmp/thumb.jpg ]; then
+                  THUMB_DATA=$(base64 -w 0 /tmp/thumb.jpg)
+                  echo "✅ Downloaded from alt URL: $alt_url"
+                  break
+                fi
+              fi
+            done
+          fi
+          
+          # If still no thumbnail, create a placeholder
+          if [ -z "$THUMB_DATA" ]; then
+            echo "⚠️ Could not download thumbnail, creating placeholder"
+            # Create a simple placeholder image
+            convert -size 120x90 xc:#1a1a1a -fill white -gravity center -pointsize 10 -annotate 0 "No Thumbnail" /tmp/thumb.png 2>/dev/null || true
+            if [ -f /tmp/thumb.png ]; then
+              THUMB_DATA=$(base64 -w 0 /tmp/thumb.png)
+            else
+              # Fallback to a minimal SVG data URL
+              THUMB_DATA="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='90' viewBox='0 0 120 90'%3E%3Crect width='120' height='90' fill='%231a1a1a'/%3E%3Ctext x='60' y='45' font-size='10' fill='%23888' text-anchor='middle'%3ENo Thumb%3C/text%3E%3C/svg%3E"
+            fi
+          fi
+          
+          echo "thumbnail_data=$THUMB_DATA" >> $GITHUB_OUTPUT
+          
+      - name: Output metadata
+        run: |
+          echo "✅ Title: ${{ steps.metadata.outputs.title }}"
+          echo "📸 Thumbnail: Downloaded and converted to base64"
+          echo "⏱️ Duration: ${{ steps.metadata.outputs.duration }}"
+          echo "👤 Uploader: ${{ steps.metadata.outputs.uploader }}"
