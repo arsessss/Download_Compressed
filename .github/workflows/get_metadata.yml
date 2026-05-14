@@ -18,9 +18,10 @@ jobs:
       uploader: ${{ steps.metadata.outputs.uploader }}
       
     steps:
-      - name: Install yt-dlp
+      - name: Install yt-dlp (fixed)
         run: |
-          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
+          python3 -m pip install --upgrade pip
+          python3 -m pip install yt-dlp
           
       - name: Get video metadata
         id: metadata
@@ -30,21 +31,32 @@ jobs:
           echo "Processing URL: $URL"
           
           # Get metadata using yt-dlp
-          TITLE=$(yt-dlp --skip-download --get-title "$URL" 2>/dev/null | head -1)
-          THUMBNAIL=$(yt-dlp --skip-download --get-thumbnail "$URL" 2>/dev/null | head -1)
-          DURATION=$(yt-dlp --skip-download --get-duration "$URL" 2>/dev/null | head -1)
-          UPLOADER=$(yt-dlp --skip-download --get-uploader "$URL" 2>/dev/null | head -1)
+          TITLE=$(python3 -m yt_dlp --skip-download --get-title "$URL" 2>/dev/null | head -1)
+          THUMBNAIL=$(python3 -m yt_dlp --skip-download --get-thumbnail "$URL" 2>/dev/null | head -1)
+          DURATION=$(python3 -m yt_dlp --skip-download --get-duration "$URL" 2>/dev/null | head -1)
+          UPLOADER=$(python3 -m yt_dlp --skip-download --get-uploader "$URL" 2>/dev/null | head -1)
           
-          # Fallbacks
-          if [ -z "$TITLE" ]; then TITLE="Unknown Title"; fi
-          if [ -z "$DURATION" ]; then DURATION="Unknown"; fi
-          if [ -z "$UPLOADER" ]; then UPLOADER="Unknown"; fi
+          # Fallbacks if empty
+          if [ -z "$TITLE" ]; then 
+            TITLE="Unknown Title"
+          fi
+          
+          if [ -z "$DURATION" ] || [ "$DURATION" = "NA" ]; then 
+            DURATION="Unknown"
+          fi
+          
+          if [ -z "$UPLOADER" ]; then 
+            UPLOADER="Unknown"
+          fi
           
           # For YouTube, create fallback thumbnail
           if echo "$URL" | grep -qiE '(youtube|youtu.be)'; then
             VIDEO_ID=$(echo "$URL" | grep -oE '(v=|be/|youtu.be/)([a-zA-Z0-9_-]{11})' | head -1 | sed 's/.*=//;s/.*\///')
-            if [ -z "$THUMBNAIL" ] && [ -n "$VIDEO_ID" ]; then
+            if [ -n "$VIDEO_ID" ] && [ -z "$THUMBNAIL" ]; then
               THUMBNAIL="https://img.youtube.com/vi/${VIDEO_ID}/hqdefault.jpg"
+            fi
+            if [ -z "$THUMBNAIL" ]; then
+              THUMBNAIL="https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg"
             fi
           fi
           
@@ -52,12 +64,17 @@ jobs:
             THUMBNAIL="https://via.placeholder.com/120x90/1a1a1a/ffffff?text=No+Thumb"
           fi
           
-          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          # Clean up title (remove special characters)
+          CLEAN_TITLE=$(echo "$TITLE" | sed 's/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s\-_]//g' | cut -c1-100)
+          
+          # Set outputs
+          echo "title=$CLEAN_TITLE" >> $GITHUB_OUTPUT
           echo "thumbnail=$THUMBNAIL" >> $GITHUB_OUTPUT
           echo "duration=$DURATION" >> $GITHUB_OUTPUT
           echo "uploader=$UPLOADER" >> $GITHUB_OUTPUT
           
-          echo "✅ Title: $TITLE"
+          # Also echo for log visibility
+          echo "✅ Title: $CLEAN_TITLE"
           echo "📸 Thumbnail: $THUMBNAIL"
           echo "⏱️ Duration: $DURATION"
           echo "👤 Uploader: $UPLOADER"
