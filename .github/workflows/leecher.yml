@@ -50,20 +50,6 @@ on:
         required: false
         type: string
         default: ''
-      split_size:
-        description: 'Maximum size per chunk (MB)'
-        required: false
-        type: choice
-        default: '95'
-        options:
-          - '25'
-          - '50'
-          - '95'
-      delete_old_archives:
-        description: 'Delete old archives'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -83,62 +69,36 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Clean old archives
-        if: ${{ github.event.inputs.delete_old_archives == 'true' }}
-        run: |
-          echo "Cleaning old archives..."
-          rm -rf downloads/ 2>/dev/null || true
-          rm -f *.7z *.7z.* 2>/dev/null || true
-          echo "Cleanup complete"
-
       - name: Install dependencies
         run: |
           pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg p7zip-full
-          echo "✅ Dependencies installed"
 
       - name: Create cookies file
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "✅ Cookies created"
-          else
-            echo "⚠️ No cookies"
           fi
-
-      - name: Parse inputs
-        id: parse
-        run: |
-          SIZE="${{ github.event.inputs.split_size }}"
-          echo "split_mb=${SIZE}" >> $GITHUB_OUTPUT
-          cat > urls.txt << 'EOF'
-          ${{ github.event.inputs.file_url_1 }}
-          ${{ github.event.inputs.file_url_2 }}
-          ${{ github.event.inputs.file_url_3 }}
-          ${{ github.event.inputs.file_url_4 }}
-          ${{ github.event.inputs.file_url_5 }}
-          EOF
-          sed -i '/^$/d' urls.txt
-          sed -i 's/^[[:space:]]*//;s/[[:space:]]*$//' urls.txt
-          echo "URLs to process:"
-          cat -n urls.txt
 
       - name: Download files
         id: download_files
         run: |
           mkdir -p downloads
-          total=$(cat urls.txt | wc -l)
-          counter=1
           success=0
+          counter=1
           YT_QUALITY="${{ github.event.inputs.youtube_quality }}"
           
-          while IFS= read -r url; do
-            echo "========================================="
-            echo "[$counter/$total] Processing: $url"
+          # Process each URL
+          for url in "${{ github.event.inputs.file_url_1 }}" "${{ github.event.inputs.file_url_2 }}" "${{ github.event.inputs.file_url_3 }}" "${{ github.event.inputs.file_url_4 }}" "${{ github.event.inputs.file_url_5 }}"; do
+            if [ -z "$url" ]; then
+              continue
+            fi
+            
+            echo "Processing [$counter]: $url"
             
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "📺 YouTube video"
+              echo "📺 YouTube"
               if [ -f cookies.txt ]; then
                 yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
               else
@@ -146,133 +106,72 @@ jobs:
               fi
               if [ -f "downloads/video_${counter}.mp4" ]; then
                 TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-50)
-                if [ -n "$TITLE" ]; then
-                  mv "downloads/video_${counter}.mp4" "downloads/${TITLE}.mp4"
-                fi
-                echo "✅ Downloaded YouTube video"
+                mv "downloads/video_${counter}.mp4" "downloads/${TITLE}.mp4"
+                echo "✅ Downloaded: ${TITLE}.mp4"
                 success=$((success + 1))
-              else
-                echo "❌ YouTube download failed"
               fi
               
             elif echo "$url" | grep -qE '(tiktok\.com|vm\.tiktok)'; then
-              echo "📱 TikTok video"
+              echo "📱 TikTok"
               yt-dlp -f "best" -o "downloads/tiktok_${counter}.mp4" "$url"
               if [ -f "downloads/tiktok_${counter}.mp4" ]; then
                 TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-40)
-                if [ -n "$TITLE" ]; then
-                  mv "downloads/tiktok_${counter}.mp4" "downloads/${TITLE}.mp4"
-                fi
-                echo "✅ Downloaded TikTok video"
+                mv "downloads/tiktok_${counter}.mp4" "downloads/${TITLE}.mp4"
+                echo "✅ Downloaded: ${TITLE}.mp4"
                 success=$((success + 1))
-              else
-                echo "❌ TikTok download failed"
               fi
               
             else
-              echo "🔗 Direct download"
+              echo "🔗 Direct"
               FILENAME=$(basename "$url" | cut -d'?' -f1)
-              if [ -z "$FILENAME" ]; then
-                FILENAME="file_${counter}"
-              fi
-              curl -L --fail --retry 3 -o "downloads/${FILENAME}" "$url"
+              curl -L --fail -o "downloads/${FILENAME}" "$url"
               if [ -f "downloads/${FILENAME}" ]; then
                 echo "✅ Downloaded: ${FILENAME}"
                 success=$((success + 1))
-              else
-                echo "❌ Direct download failed"
               fi
             fi
             
             counter=$((counter + 1))
-          done < urls.txt
-          
-          echo "success_count=${success}" >> $GITHUB_OUTPUT
-          echo "✅ Downloaded ${success}/${total} files"
-
-      - name: Check downloaded files
-        run: |
-          echo "Files in downloads folder:"
-          ls -la downloads/ || echo "No files found!"
-          if [ ! -d "downloads" ] || [ -z "$(ls -A downloads)" ]; then
-            echo "No files downloaded, creating dummy file"
-            mkdir -p downloads
-            echo "No files were downloaded successfully" > downloads/ERROR.txt
-          fi
-
-      - name: Archive files
-        id: process_files
-        run: |
-          SPLIT_MB=${{ steps.parse.outputs.split_mb }}
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          FOLDER="downloads_archive/${TIMESTAMP}"
-          mkdir -p "$FOLDER"
-          PASSWORD="${{ github.event.inputs.zip_password }}"
-          
-          echo "Archive folder: ${FOLDER}"
-          echo "Split size: ${SPLIT_MB}MB"
-          
-          counter=0
-          for file in downloads/*; do
-            [ -f "$file" ] || continue
-            counter=$((counter + 1))
-            BASENAME=$(basename "$file")
-            NAME="${BASENAME%.*}"
-            SIZE_MB=$(du -m "$file" | cut -f1)
-            
-            echo "Processing: $BASENAME (${SIZE_MB} MB)"
-            
-            if [ -n "$PASSWORD" ]; then
-              7z a -p"$PASSWORD" -mhe=on -mx=3 -v${SPLIT_MB}m "${FOLDER}/${NAME}.7z" "$file"
-            else
-              7z a -mx=3 -v${SPLIT_MB}m "${FOLDER}/${NAME}.7z" "$file"
-            fi
-            
-            # If only one part, remove the .001 extension
-            if [ -f "${FOLDER}/${NAME}.7z.001" ] && [ ! -f "${FOLDER}/${NAME}.7z.002" ]; then
-              mv "${FOLDER}/${NAME}.7z.001" "${FOLDER}/${NAME}.7z"
-            fi
           done
           
-          rm -rf downloads
-          echo "processed_count=${counter}" >> $GITHUB_OUTPUT
-          echo "folder=${FOLDER}" >> $GITHUB_OUTPUT
-          
-          if [ $counter -eq 0 ]; then
-            echo "⚠️ No files were archived!"
-            mkdir -p "$FOLDER"
-            echo "No files were downloaded successfully" > "$FOLDER/ERROR.txt"
-          fi
+          echo "success_count=${success}" >> $GITHUB_OUTPUT
 
-      - name: Configure Git
+      - name: Create zip archive (no splitting)
+        id: archive
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          mkdir -p "downloads_${TIMESTAMP}"
+          PASSWORD="${{ github.event.inputs.zip_password }}"
+          
+          # Move files to timestamped folder
+          mv downloads/* "downloads_${TIMESTAMP}/" 2>/dev/null || true
+          
+          # Create a single zip file
+          if [ -n "$PASSWORD" ]; then
+            7z a -p"$PASSWORD" -mx=3 "archive_${TIMESTAMP}.7z" "downloads_${TIMESTAMP}/"
+          else
+            7z a -mx=3 "archive_${TIMESTAMP}.7z" "downloads_${TIMESTAMP}/"
+          fi
+          
+          echo "archive_name=archive_${TIMESTAMP}.7z" >> $GITHUB_OUTPUT
+          echo "folder=downloads_${TIMESTAMP}" >> $GITHUB_OUTPUT
+          
+          rm -rf "downloads_${TIMESTAMP}"
 
       - name: Commit and Push
         run: |
-          FOLDER="${{ steps.process_files.outputs.folder }}"
-          if [ -d "$FOLDER" ]; then
-            git add "$FOLDER/"*.7z* 2>/dev/null || true
-            git add "$FOLDER/"*.txt 2>/dev/null || true
-            if git diff --staged --quiet; then
-              echo "No changes to commit"
-            else
-              git commit -m "Add downloaded files from ${FOLDER}"
-              git push origin main
-              echo "✅ Changes pushed"
-            fi
-          else
-            echo "❌ No folder to commit"
-            exit 1
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add *.7z 2>/dev/null || true
+          if ! git diff --staged --quiet; then
+            git commit -m "Add archive ${{ steps.archive.outputs.archive_name }}"
+            git push origin main
           fi
 
       - name: Summary
         run: |
-          FOLDER="${{ steps.process_files.outputs.folder }}"
-          echo "## 📊 Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Download Complete" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Successful downloads | ${{ steps.download_files.outputs.success_count }} / ${{ steps.parse.outputs.url_count }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Archive folder | ${FOLDER} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Status | ✅ Workflow completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Successful downloads | ${{ steps.download_files.outputs.success_count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Archive | ${{ steps.archive.outputs.archive_name }} |" >> $GITHUB_STEP_SUMMARY
