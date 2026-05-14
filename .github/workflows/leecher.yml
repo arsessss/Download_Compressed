@@ -103,9 +103,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg p7zip-full
           
-          # Install TikTok downloader alternative
-          pip3 install tikdown --break-system-packages || pip3 install tikdown
-          
           echo "✅ Dependencies installed"
 
       - name: Create cookies file from secret (for YouTube)
@@ -182,15 +179,10 @@ jobs:
             elif echo "$url" | grep -qE '(tiktok\.com|vm\.tiktok)'; then
               echo "📱 Detected TikTok link"
               if [ "$TT_WATERMARK" = "true" ]; then
-                echo "Downloading with watermark"
-              else
-                echo "Downloading without watermark"
-              fi
-              
-              # Use yt-dlp for TikTok (works well)
-              if [ "$TT_WATERMARK" = "true" ]; then
+                echo "Downloading WITH watermark"
                 yt-dlp -f "best" -o "files/tt_${counter}.%(ext)s" "$url"
               else
+                echo "Downloading WITHOUT watermark"
                 yt-dlp -f "best" --config-location /dev/null \
                        --add-header "User-Agent:Mozilla/5.0" \
                        -o "files/tt_${counter}.%(ext)s" \
@@ -200,8 +192,11 @@ jobs:
               DOWNLOADED_FILE=$(ls files/tt_${counter}.* 2>/dev/null | head -1)
               if [ -f "$DOWNLOADED_FILE" ]; then
                 TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.- ' | cut -c1-40)
-                mv "$DOWNLOADED_FILE" "files/tiktok_${TITLE}.mp4"
-                size=$(ls -lh "files/tiktok_${TITLE}.mp4" | awk '{print $5}')
+                if [ -z "$TITLE" ]; then
+                  TITLE="tiktok_video_${counter}"
+                fi
+                mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
+                size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
                 echo "✅ Downloaded TikTok: ${TITLE}.mp4 ($size)"
                 success=$((success + 1))
               else
@@ -308,7 +303,7 @@ jobs:
           | 📂 Download folder | [${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
           | Status | ✅ Success |
           ---
-          **Support for:** YouTube • TikTok • Direct Links
+          **🎬 Supported platforms:** YouTube • TikTok • Direct Links
           
           Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)
           EOF
