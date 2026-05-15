@@ -41,6 +41,15 @@ jobs:
           sudo apt-get install -y zip
           pip3 install yt-dlp
 
+      - name: Setup cookies
+        run: |
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          if [ -s cookies.txt ]; then
+            echo "✅ Cookies file created with $(wc -l < cookies.txt) lines"
+          else
+            echo "⚠️ Cookies file is empty"
+          fi
+
       - name: Download file
         run: |
           mkdir -p downloads
@@ -51,28 +60,33 @@ jobs:
           echo "Quality: $QUALITY"
           
           if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube mode - downloading with title as filename"
+            echo "YouTube mode with cookies"
             yt-dlp \
+              --cookies cookies.txt \
+              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
               -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]/best" \
               --merge-output-format mp4 \
-              --retries 5 \
+              --retries 10 \
+              --sleep-interval 5 \
+              --max-sleep-interval 10 \
               -o "downloads/%(title)s.%(ext)s" \
               "$URL"
           else
-            echo "Direct download mode - keeping original filename"
+            echo "Direct download mode"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
             if [ -z "$FILENAME" ] || [ "$FILENAME" = "/" ]; then
               FILENAME="downloaded_file"
             fi
-            echo "Filename: $FILENAME"
             curl -L --fail --retry 3 --retry-delay 2 --max-time 600 -o "downloads/$FILENAME" "$URL"
           fi
           
-          if [ $? -eq 0 ] && [ "$(ls -A downloads 2>/dev/null)" ]; then
-            echo "Download successful"
+          DOWNLOAD_EXIT_CODE=$?
+          if [ $DOWNLOAD_EXIT_CODE -eq 0 ] && [ "$(ls -A downloads 2>/dev/null)" ]; then
+            echo "✅ Download successful"
             ls -la downloads/
           else
-            echo "Download failed or no files downloaded"
+            echo "❌ Download failed with exit code: $DOWNLOAD_EXIT_CODE"
+            cat downloads/* 2>/dev/null || echo "No output file"
             exit 1
           fi
 
@@ -85,7 +99,7 @@ jobs:
           zip -r "../$ZIP_NAME" .
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
           cd ..
-          echo "Archive created: $ZIP_NAME"
+          echo "✅ Archive created: $ZIP_NAME"
 
       - name: Commit and push
         run: |
