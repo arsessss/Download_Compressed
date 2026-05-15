@@ -1,0 +1,30 @@
+name: Transfer file to GitHub - v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url_1:
+        description: 'Link 1 (required)'
+        required: true
+        type: string
+        default: ''
+      youtube_quality:
+        description: 'Quality for YouTube links'
+        required: false
+        type: choice
+        default: '1080'
+        options: ['2160','1440','1080','720','480','360']
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: curl -L -o file.dat "${{ github.event.inputs.file_url_1 }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file
+          path: file.dat
