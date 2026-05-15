@@ -30,19 +30,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install yt-dlp
         run: pip3 install yt-dlp && sudo apt-get install -y zip
-      - name: Create cookies
-        run: |
-          cat > cookies.txt << "EOF"
-# Netscape HTTP Cookie File
-__Secure-1PAPISID	9N0lmr6YxXFHjUhg/AH0ZCX-UsocxzegOM	.youtube.com	/	2027-03-28T13:37:21.982Z	51		✓				High
-__Secure-1PSID	g.a0007AhxenGQsnN0naCotUWUiNoxWaKmWdJ1klawmMp2boUqMd_TeT7BJFQ6j30socdbOZN7LQACgYKAbISARQSFQHGX2MiGjUKHf38LdWu9iFteRQMAxoVAUF8yKpwyLtuly3A77cJy5BkV15T0076	.youtube.com	/	2027-03-28T13:37:21.982Z	167	✓	✓				High
-VISITOR_INFO1_LIVE	tI3-DVIcilc	.youtube.com	/	2026-08-26T09:33:23.553Z	29	✓	✓	None			Medium
-          EOF
       - name: Download
         run: |
           URL="${{ github.event.inputs.file_url_1 }}"
           if [[ "$URL" == *"youtube"* ]]; then
-            yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "video.mp4" "$URL"
+            yt-dlp --js-runtime deno -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "video.mp4" "$URL"
           else
             curl -L -o "file.dat" "$URL"
           fi
