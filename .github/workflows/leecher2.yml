@@ -1,4 +1,4 @@
-name: Transfer file to GitHub - v2
+name: Leecher360D - Fixed
 
 on:
   workflow_dispatch:
@@ -30,15 +30,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Delete old zip files
+      - name: Delete old files
         run: |
           rm -f *.zip
+          rm -rf downloads
 
-      - name: Install yt-dlp and zip
+      - name: Install yt-dlp and dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y zip
-          pip3 install yt-dlp
+          pip3 install yt-dlp[default] yt-dlp-ejs
+
+      - name: Create cookies file
+        run: |
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          echo "Cookies file created"
 
       - name: Download file
         run: |
@@ -47,13 +53,22 @@ jobs:
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           echo "URL: $URL"
           echo "Quality: $QUALITY"
-          if [[ "$URL" == *"youtube"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube detected"
-            yt-dlp -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
+          
+          if echo "$URL" | grep -qE "youtube.com|youtu.be"; then
+            echo "YouTube video detected"
+            yt-dlp --cookies cookies.txt \
+                   --extractor-args "youtube:player_client=tv,android_sdkless" \
+                   --js-runtime deno \
+                   -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" \
+                   --merge-output-format mp4 \
+                   -o "downloads/video.%(ext)s" "$URL"
           else
-            echo "Direct download detected"
+            echo "Direct download"
             curl -L -o "downloads/file.dat" "$URL"
           fi
+          
+          echo "Download complete"
+          ls -la downloads/
 
       - name: Create zip
         run: |
