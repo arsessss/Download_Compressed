@@ -30,82 +30,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clean up old files
-        run: |
-          rm -f *.zip
-          rm -rf downloads
+      - name: Clean old files
+        run: rm -f *.zip && rm -rf downloads
 
-      - name: Install Deno and dependencies
+      - name: Install yt-dlp
         run: |
-          curl -fsSL https://deno.land/install.sh | sh
-          export DENO_INSTALL="$HOME/.deno"
-          export PATH="$DENO_INSTALL/bin:$PATH"
-          echo "$DENO_INSTALL/bin" >> $GITHUB_PATH
-          pip3 install yt-dlp yt-dlp-ejs
-          sudo apt-get update && sudo apt-get install -y zip
+          pip3 install yt-dlp
+          sudo apt-get install -y zip
 
-      - name: Setup cookies
-        run: |
-          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
-            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "Cookies file created"
-          else
-            echo "No cookies found, continuing without"
-          fi
-
-      - name: Download file
+      - name: Download (Android client method)
         run: |
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           
-          echo "URL: $URL"
-          echo "Quality: $QUALITY"
-          
           if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube mode with Deno runtime"
-            export PATH="$HOME/.deno/bin:$PATH"
+            echo "Using Android client to bypass blocks"
             yt-dlp \
-              --cookies cookies.txt \
-              --extractor-args "youtube:player_client=tv,android_sdkless" \
-              --js-runtime deno \
-              -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" \
-              --merge-output-format mp4 \
-              --retries 5 \
-              -o "downloads/%(title)s.%(ext)s" \
+              --extractor-args "youtube:player_client=android" \
+              -f "best[height<=${QUALITY}]" \
+              -o "downloads/video.%(ext)s" \
               "$URL"
           else
-            echo "Direct download mode"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
-            if [ -z "$FILENAME" ] || [ "$FILENAME" = "/" ]; then
-              FILENAME="downloaded_file"
-            fi
-            curl -L --fail --retry 3 --retry-delay 2 --max-time 600 -o "downloads/$FILENAME" "$URL"
-          fi
-          
-          if [ $? -eq 0 ] && [ "$(ls -A downloads 2>/dev/null)" ]; then
-            echo "Download successful"
-            ls -la downloads/
-          else
-            echo "Download failed"
-            exit 1
+            curl -L -o "downloads/$FILENAME" "$URL"
           fi
 
-      - name: Create zip archive
-        run: |
-          cd downloads
-          FIRST_FILE=$(ls | head -1)
-          BASENAME="${FIRST_FILE%.*}"
-          ZIP_NAME="${BASENAME}.zip"
-          zip -r "../$ZIP_NAME" .
-          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
-          cd ..
-          echo "Archive created: $ZIP_NAME"
+      - name: Create zip
+        run: cd downloads && zip -r ../archive.zip . && cd ..
 
-      - name: Commit and push
+      - name: Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${{ env.ZIP_NAME }}"
-          git commit -m "Add ${{ env.ZIP_NAME }}" || echo "No changes"
+          git add archive.zip
+          git commit -m "Add archive" || true
           git push origin main
