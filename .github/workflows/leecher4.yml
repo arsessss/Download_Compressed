@@ -45,17 +45,23 @@ jobs:
           export PATH="$HOME/.deno/bin:$PATH"
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
-          if [[ "$URL" == *"youtube"* ]]; then
-            echo "YouTube mode with Deno"
-            yt-dlp --cookies cookies.txt \
-              --js-runtime deno \
-              -f "best[height<=${{ github.event.inputs.youtube_quality }}]" \
-              -o "downloads/%(title)s.%(ext)s" \
-              "$URL"
-          else
-            FILENAME=$(basename "$URL" | cut -d"?" -f1)
-            curl -L -o "downloads/$FILENAME" "$URL"
-          fi
+          {
+            echo "=== DOWNLOAD LOG ==="
+            echo "URL: $URL"
+            echo "Quality: ${{ github.event.inputs.youtube_quality }}"
+            echo "Time: $(date)"
+            echo ""
+            if [[ "$URL" == *"youtube"* ]]; then
+              echo "YouTube mode with Deno"
+              yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "downloads/%(title)s.%(ext)s" "$URL" 2>&1
+            else
+              FILENAME=$(basename "$URL" | cut -d"?" -f1)
+              curl -L -o "downloads/$FILENAME" "$URL" 2>&1
+            fi
+            echo ""
+            echo "Exit code: $?"
+            echo "=== END LOG ==="
+          } | tee logs.txt
       - name: Get filename
         run: |
           cd downloads
@@ -65,10 +71,10 @@ jobs:
           cd ..
       - name: Create zip
         run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
-      - name: Push
+      - name: Push logs and archive
         run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
-          git add "${BASENAME}.zip"
-          git commit -m "Add ${BASENAME}.zip" || true
+          git add logs.txt "${BASENAME}.zip"
+          git commit -m "Add ${BASENAME}.zip and logs" || true
           git push origin main
