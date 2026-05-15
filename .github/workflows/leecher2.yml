@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Clean old files
-        run: rm -f *.zip && rm -rf downloads
+        run: rm -f *.zip *.log && rm -rf downloads
 
       - name: Install Deno and yt-dlp
         run: |
@@ -47,40 +47,61 @@ jobs:
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
           fi
 
-      - name: Download
+      - name: Download (with logging)
         run: |
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
+          LOG_FILE="download_log.txt"
+          
+          echo "=== DOWNLOAD LOG ===" > $LOG_FILE
+          echo "URL: $URL" >> $LOG_FILE
+          echo "Quality: $QUALITY" >> $LOG_FILE
+          echo "Time: $(date)" >> $LOG_FILE
+          echo "" >> $LOG_FILE
           
           if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube mode"
+            echo "YouTube mode" | tee -a $LOG_FILE
             yt-dlp --cookies cookies.txt \
               --extractor-args "youtube:player_client=tv,android_sdkless" \
               --js-runtime deno \
               -f "best[height<=${QUALITY}]" \
               -o "downloads/%(title)s.%(ext)s" \
-              "$URL"
+              "$URL" 2>&1 | tee -a $LOG_FILE
           else
-            echo "Direct mode"
-            curl -L -o "downloads/$(basename "$URL" | cut -d"?" -f1)" "$URL"
+            echo "Direct mode" | tee -a $LOG_FILE
+            curl -L -o "downloads/$(basename "$URL" | cut -d"?" -f1)" "$URL" 2>&1 | tee -a $LOG_FILE
           fi
+          
+          echo "" >> $LOG_FILE
+          echo "Exit code: $?" >> $LOG_FILE
+          echo "=== END LOG ===" >> $LOG_FILE
+
+      - name: Save logs
+        if: always()
+        run: |
+          cp download_log.txt logs.txt
+          echo "LOGS_SAVED=true" >> $GITHUB_ENV
 
       - name: Get filename
+        if: success()
         run: |
           cd downloads
-          FIRST_FILE=$(ls | head -1)
-          BASENAME="${FIRST_FILE%.*}"
-          echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          if [ "$(ls -A)" ]; then
+            FIRST_FILE=$(ls | head -1)
+            BASENAME="${FIRST_FILE%.*}"
+            echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          fi
           cd ..
 
       - name: Create zip
+        if: success() && env.BASENAME != ""
         run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
 
-      - name: Push
+      - name: Commit logs and files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${BASENAME}.zip"
-          git commit -m "Add ${BASENAME}.zip" || true
+          git add logs.txt *.zip 2>/dev/null || true
+          git commit -m "Add download logs and files" || echo "No changes"
           git push origin main
