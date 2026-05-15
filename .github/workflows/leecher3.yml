@@ -1,0 +1,60 @@
+name: Leech360D v3
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url_1:
+        description: 'Link (YouTube or direct)'
+        required: true
+        type: string
+      youtube_quality:
+        description: 'YouTube quality'
+        required: false
+        type: choice
+        default: '1080'
+        options:
+          - '2160'
+          - '1440'
+          - '1080'
+          - '720'
+          - '480'
+          - '360'
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yt-dlp
+        run: |
+          pip3 install yt-dlp
+          sudo apt-get install -y zip
+      - name: Create cookies
+        run: |
+          cat > cookies.txt << "EOF"
+# Netscape HTTP Cookie File
+__Secure-1PAPISID	9N0lmr6YxXFHjUhg/AH0ZCX-UsocxzegOM	.youtube.com	/	2027-03-28T13:37:21.982Z	51		✓				High
+__Secure-1PSID	g.a0007AhxenGQsnN0naCotUWUiNoxWaKmWdJ1klawmMp2boUqMd_TeT7BJFQ6j30socdbOZN7LQACgYKAbISARQSFQHGX2MiGjUKHf38LdWu9iFteRQMAxoVAUF8yKpwyLtuly3A77cJy5BkV15T0076	.youtube.com	/	2027-03-28T13:37:21.982Z	167	✓	✓				High
+VISITOR_INFO1_LIVE	tI3-DVIcilc	.youtube.com	/	2026-08-26T09:33:23.553Z	29	✓	✓	None			Medium
+          EOF
+      - name: Download
+        run: |
+          URL="${{ github.event.inputs.file_url_1 }}"
+          QUALITY="${{ github.event.inputs.youtube_quality }}"
+          if [[ "$URL" == *"youtube"* ]]; then
+            yt-dlp --cookies cookies.txt --extractor-args "youtube:player_client=tv,android_sdkless" --js-runtime deno -f "best[height<=${QUALITY}]" -o "video.mp4" "$URL"
+          else
+            curl -L -o "file.dat" "$URL"
+          fi
+      - name: Zip
+        run: zip -r archive.zip *.mp4 *.dat 2>/dev/null || echo "No files"
+      - name: Push
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add archive.zip
+          git commit -m "Add archive" || true
+          git push origin main
