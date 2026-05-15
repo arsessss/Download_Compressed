@@ -2,7 +2,7 @@
 name: Transfer file to GitHub (supports YouTube links)
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
     inputs:
       file_url_1:
         description: 'Link 1 (required) - can be YouTube or direct link'
