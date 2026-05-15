@@ -35,19 +35,22 @@ jobs:
           rm -f *.zip
           rm -rf downloads
 
-      - name: Install dependencies
+      - name: Install Deno and dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y zip
-          pip3 install yt-dlp
+          curl -fsSL https://deno.land/install.sh | sh
+          export DENO_INSTALL="$HOME/.deno"
+          export PATH="$DENO_INSTALL/bin:$PATH"
+          echo "$DENO_INSTALL/bin" >> $GITHUB_PATH
+          pip3 install yt-dlp yt-dlp-ejs
+          sudo apt-get update && sudo apt-get install -y zip
 
       - name: Setup cookies
         run: |
-          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-          if [ -s cookies.txt ]; then
-            echo "✅ Cookies file created with $(wc -l < cookies.txt) lines"
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+            echo "Cookies file created"
           else
-            echo "⚠️ Cookies file is empty"
+            echo "No cookies found, continuing without"
           fi
 
       - name: Download file
@@ -60,15 +63,15 @@ jobs:
           echo "Quality: $QUALITY"
           
           if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube mode with cookies"
+            echo "YouTube mode with Deno runtime"
+            export PATH="$HOME/.deno/bin:$PATH"
             yt-dlp \
               --cookies cookies.txt \
-              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-              -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]/best" \
+              --extractor-args "youtube:player_client=tv,android_sdkless" \
+              --js-runtime deno \
+              -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" \
               --merge-output-format mp4 \
-              --retries 10 \
-              --sleep-interval 5 \
-              --max-sleep-interval 10 \
+              --retries 5 \
               -o "downloads/%(title)s.%(ext)s" \
               "$URL"
           else
@@ -80,13 +83,11 @@ jobs:
             curl -L --fail --retry 3 --retry-delay 2 --max-time 600 -o "downloads/$FILENAME" "$URL"
           fi
           
-          DOWNLOAD_EXIT_CODE=$?
-          if [ $DOWNLOAD_EXIT_CODE -eq 0 ] && [ "$(ls -A downloads 2>/dev/null)" ]; then
-            echo "✅ Download successful"
+          if [ $? -eq 0 ] && [ "$(ls -A downloads 2>/dev/null)" ]; then
+            echo "Download successful"
             ls -la downloads/
           else
-            echo "❌ Download failed with exit code: $DOWNLOAD_EXIT_CODE"
-            cat downloads/* 2>/dev/null || echo "No output file"
+            echo "Download failed"
             exit 1
           fi
 
@@ -94,17 +95,17 @@ jobs:
         run: |
           cd downloads
           FIRST_FILE=$(ls | head -1)
-          BASENAME=$(echo "$FIRST_FILE" | sed "s/\.[^.]*$//")
+          BASENAME="${FIRST_FILE%.*}"
           ZIP_NAME="${BASENAME}.zip"
           zip -r "../$ZIP_NAME" .
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
           cd ..
-          echo "✅ Archive created: $ZIP_NAME"
+          echo "Archive created: $ZIP_NAME"
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "${{ env.ZIP_NAME }}"
-          git commit -m "Add ${{ env.ZIP_NAME }}" || echo "No changes to commit"
+          git commit -m "Add ${{ env.ZIP_NAME }}" || echo "No changes"
           git push origin main
