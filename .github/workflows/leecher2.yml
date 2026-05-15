@@ -26,36 +26,64 @@ permissions:
 jobs:
   download:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Delete old zip
-        run: rm -f *.zip
+      - name: Clean up old files
+        run: |
+          rm -f *.zip
+          rm -rf downloads
 
-      - name: Install yt-dlp
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y zip
           pip3 install yt-dlp
 
-      - name: Download
+      - name: Download file
         run: |
+          mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
-          mkdir -p downloads
-          if echo "$URL" | grep -qE "youtube.com|youtu.be"; then
-            yt-dlp -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
+          
+          echo "URL: $URL"
+          echo "Quality: $QUALITY"
+          
+          if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
+            echo "YouTube mode"
+            yt-dlp \
+              -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]/best" \
+              --merge-output-format mp4 \
+              --retries 5 \
+              --fragment-retries 5 \
+              -o "downloads/video.mp4" \
+              "$URL"
           else
-            curl -L -o "downloads/file.dat" "$URL"
+            echo "Direct download mode"
+            curl -L --fail --retry 3 --retry-delay 2 --max-time 600 -o "downloads/file.dat" "$URL"
+          fi
+          
+          if [ $? -eq 0 ] && [ "$(ls -A downloads 2>/dev/null)" ]; then
+            echo "Download successful"
+            ls -la downloads/
+          else
+            echo "Download failed or no files downloaded"
+            exit 1
           fi
 
-      - name: Create zip
-        run: zip -r archive.zip downloads/
+      - name: Create zip archive
+        run: |
+          cd downloads
+          zip -r ../archive.zip .
+          cd ..
+          echo "Archive created: archive.zip"
+          ls -la archive.zip
 
-      - name: Push
+      - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add archive.zip
-          git commit -m "Add archive" || true
+          git commit -m "Add downloaded archive" || echo "No changes to commit"
           git push origin main
