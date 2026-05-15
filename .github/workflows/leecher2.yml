@@ -1,14 +1,15 @@
-name: Leech360D Fast
+name: Leech360D Downloader
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'File URL (YouTube or direct)'
+        description: 'Link 1 (required) - can be YouTube or direct link'
         required: true
         type: string
+        default: ''
       youtube_quality:
-        description: 'Quality'
+        description: 'Quality for YouTube links'
         required: false
         type: choice
         default: '1080'
@@ -26,38 +27,60 @@ permissions:
 jobs:
   download:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clean & Install
+      - name: Clean old files
+        run: rm -f *.zip && rm -rf downloads
+
+      - name: Install Deno and yt-dlp
         run: |
-          rm -f *.zip
-          sudo apt-get update -qq && sudo apt-get install -y zip
-          pip3 install -q yt-dlp
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          pip3 install yt-dlp
+          sudo apt-get install -y zip
+
+      - name: Setup cookies
+        run: |
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          fi
 
       - name: Download
         run: |
+          mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           
-          if echo "$URL" | grep -qE "youtube|youtu.be"; then
-            yt-dlp -f "best[height<=${QUALITY}]" -o "downloaded.%(ext)s" "$URL"
-            FILENAME=$(ls downloaded.* 2>/dev/null | head -1)
+          if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
+            echo "YouTube mode"
+            yt-dlp --cookies cookies.txt \
+              --extractor-args "youtube:player_client=tv,android_sdkless" \
+              --js-runtime deno \
+              -f "best[height<=${QUALITY}]" \
+              -o "downloads/%(title)s.%(ext)s" \
+              "$URL"
           else
-            FILENAME=$(basename "$URL" | cut -d"?" -f1)
-            curl -L --fail -o "$FILENAME" "$URL"
+            echo "Direct mode"
+            curl -L -o "downloads/$(basename "$URL" | cut -d"?" -f1)" "$URL"
           fi
-          
-          if [ -f "$FILENAME" ]; then
-            ZIP_NAME="${FILENAME%.*}.zip"
-            zip -j "$ZIP_NAME" "$FILENAME"
-            echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
-          fi
+
+      - name: Get filename
+        run: |
+          cd downloads
+          FIRST_FILE=$(ls | head -1)
+          BASENAME="${FIRST_FILE%.*}"
+          echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          cd ..
+
+      - name: Create zip
+        run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
 
       - name: Push
         run: |
-          git config user.name "bot"
-          git config user.email "bot@localhost"
-          git add "${{ env.ZIP_NAME }}"
-          git commit -m "Add ${{ env.ZIP_NAME }}" || true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${BASENAME}.zip"
+          git commit -m "Add ${BASENAME}.zip" || true
           git push origin main
