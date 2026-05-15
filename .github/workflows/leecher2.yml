@@ -36,13 +36,9 @@ jobs:
 
       - name: Clean old archives
         run: |
-          echo "Cleaning old archives..."
-          find . -type f \( -name "*.7z.*" -o -name "*.7z" -o -name "*.zip" \) -exec rm -v {} \;
-          find . -type d -name "downloads" -exec rm -rf {} \;
-          git rm --cached *.7z.* 2>/dev/null || true
-          git rm --cached *.7z 2>/dev/null || true
-          git rm --cached *.zip 2>/dev/null || true
-          git rm --cached -r downloads 2>/dev/null || true
+          echo "Cleaning old .zip files..."
+          rm -f *.zip
+          rm -rf files
           echo "Old archives cleaned."
 
       - name: Install Deno and yt-dlp with EJS support
@@ -54,7 +50,7 @@ jobs:
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
           rm -rf ffmpeg-master-latest-linux64-gpl
-          sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+          sudo apt-get update -qq && sudo apt-get install -y zip
 
       - name: Create cookies file from secret
         run: |
@@ -73,20 +69,12 @@ jobs:
           if echo "$URL" | grep -qE "(youtube\.com|youtu\.be)"; then
             echo "Detected YouTube link. Downloading with yt-dlp + Deno + cookies..."
             
-            # Try multiple extraction methods to ensure success
             yt-dlp --cookies cookies.txt \
                    --extractor-args "youtube:player_client=tv,android_sdkless" \
                    --js-runtime deno \
                    -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
                    --merge-output-format mp4 \
-                   -o "files/video.%(ext)s" \
-                   "$URL" || \
-            yt-dlp --cookies cookies.txt \
-                   --extractor-args "youtube:player_client=web" \
-                   --js-runtime deno \
-                   -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
-                   --merge-output-format mp4 \
-                   -o "files/video.%(ext)s" \
+                   -o "files/video.mp4" \
                    "$URL"
             
             if [ -f files/video.mp4 ]; then
@@ -104,7 +92,8 @@ jobs:
             if [ -z "$FILENAME" ]; then
               FILENAME="file.dat"
             fi
-            if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/$FILENAME" "$URL"; then
+            curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/$FILENAME" "$URL"
+            if [ -f "files/$FILENAME" ]; then
               size=$(ls -lh "files/$FILENAME" | awk "{print $5}")
               echo "Downloaded: $FILENAME ($size)"
               echo "success_count=1" >> $GITHUB_OUTPUT
