@@ -51,17 +51,21 @@ jobs:
           echo "Quality: $QUALITY"
           
           if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube mode"
+            echo "YouTube mode - downloading with title as filename"
             yt-dlp \
               -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]/best" \
               --merge-output-format mp4 \
               --retries 5 \
-              --fragment-retries 5 \
-              -o "downloads/video.mp4" \
+              -o "downloads/%(title)s.%(ext)s" \
               "$URL"
           else
-            echo "Direct download mode"
-            curl -L --fail --retry 3 --retry-delay 2 --max-time 600 -o "downloads/file.dat" "$URL"
+            echo "Direct download mode - keeping original filename"
+            FILENAME=$(basename "$URL" | cut -d"?" -f1)
+            if [ -z "$FILENAME" ] || [ "$FILENAME" = "/" ]; then
+              FILENAME="downloaded_file"
+            fi
+            echo "Filename: $FILENAME"
+            curl -L --fail --retry 3 --retry-delay 2 --max-time 600 -o "downloads/$FILENAME" "$URL"
           fi
           
           if [ $? -eq 0 ] && [ "$(ls -A downloads 2>/dev/null)" ]; then
@@ -75,15 +79,18 @@ jobs:
       - name: Create zip archive
         run: |
           cd downloads
-          zip -r ../archive.zip .
+          FIRST_FILE=$(ls | head -1)
+          BASENAME=$(echo "$FIRST_FILE" | sed "s/\.[^.]*$//")
+          ZIP_NAME="${BASENAME}.zip"
+          zip -r "../$ZIP_NAME" .
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
           cd ..
-          echo "Archive created: archive.zip"
-          ls -la archive.zip
+          echo "Archive created: $ZIP_NAME"
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add archive.zip
-          git commit -m "Add downloaded archive" || echo "No changes to commit"
+          git add "${{ env.ZIP_NAME }}"
+          git commit -m "Add ${{ env.ZIP_NAME }}" || echo "No changes to commit"
           git push origin main
