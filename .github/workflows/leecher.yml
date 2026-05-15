@@ -84,7 +84,7 @@ jobs:
             echo "⚠️ No cookies secret found"
           fi
 
-      - name: Download files
+      - name: Download and archive files
         id: download_files
         run: |
           mkdir -p downloads
@@ -101,15 +101,28 @@ jobs:
             
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
               echo "📺 YouTube"
-              if [ -f cookies.txt ]; then
-                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
-              else
-                yt-dlp -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
+              
+              # Get video title first
+              TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-50)
+              if [ -z "$TITLE" ]; then
+                TITLE="youtube_video_${counter}"
               fi
-              if [ -f "downloads/video_${counter}.mp4" ]; then
-                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-50)
-                mv "downloads/video_${counter}.mp4" "downloads/${TITLE}.mp4"
+              
+              if [ -f cookies.txt ]; then
+                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "downloads/${TITLE}.mp4" "$url"
+              else
+                yt-dlp -f "best[height<=${YT_QUALITY}]" -o "downloads/${TITLE}.mp4" "$url"
+              fi
+              
+              if [ -f "downloads/${TITLE}.mp4" ]; then
                 echo "✅ Downloaded: ${TITLE}.mp4"
+                # Create archive with the video name
+                if [ -n "${{ github.event.inputs.zip_password }}" ]; then
+                  7z a -p"${{ github.event.inputs.zip_password }}" -mx=3 "${TITLE}.7z" "downloads/${TITLE}.mp4"
+                else
+                  7z a -mx=3 "${TITLE}.7z" "downloads/${TITLE}.mp4"
+                fi
+                rm "downloads/${TITLE}.mp4"
                 success=$((success + 1))
               else
                 echo "❌ YouTube download failed"
@@ -117,11 +130,24 @@ jobs:
               
             elif echo "$url" | grep -qE '(tiktok\.com|vm\.tiktok)'; then
               echo "📱 TikTok"
-              yt-dlp -f "best" -o "downloads/tiktok_${counter}.mp4" "$url"
-              if [ -f "downloads/tiktok_${counter}.mp4" ]; then
-                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-40)
-                mv "downloads/tiktok_${counter}.mp4" "downloads/${TITLE}.mp4"
+              
+              # Get video title first
+              TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-40)
+              if [ -z "$TITLE" ]; then
+                TITLE="tiktok_video_${counter}"
+              fi
+              
+              yt-dlp -f "best" -o "downloads/${TITLE}.mp4" "$url"
+              
+              if [ -f "downloads/${TITLE}.mp4" ]; then
                 echo "✅ Downloaded: ${TITLE}.mp4"
+                # Create archive with the video name
+                if [ -n "${{ github.event.inputs.zip_password }}" ]; then
+                  7z a -p"${{ github.event.inputs.zip_password }}" -mx=3 "${TITLE}.7z" "downloads/${TITLE}.mp4"
+                else
+                  7z a -mx=3 "${TITLE}.7z" "downloads/${TITLE}.mp4"
+                fi
+                rm "downloads/${TITLE}.mp4"
                 success=$((success + 1))
               else
                 echo "❌ TikTok download failed"
@@ -130,9 +156,22 @@ jobs:
             else
               echo "🔗 Direct"
               FILENAME=$(basename "$url" | cut -d'?' -f1)
+              if [ -z "$FILENAME" ]; then
+                FILENAME="file_${counter}"
+              fi
+              
               curl -L --fail -o "downloads/${FILENAME}" "$url"
+              
               if [ -f "downloads/${FILENAME}" ]; then
                 echo "✅ Downloaded: ${FILENAME}"
+                BASENAME="${FILENAME%.*}"
+                # Create archive with the file name
+                if [ -n "${{ github.event.inputs.zip_password }}" ]; then
+                  7z a -p"${{ github.event.inputs.zip_password }}" -mx=3 "${BASENAME}.7z" "downloads/${FILENAME}"
+                else
+                  7z a -mx=3 "${BASENAME}.7z" "downloads/${FILENAME}"
+                fi
+                rm "downloads/${FILENAME}"
                 success=$((success + 1))
               else
                 echo "❌ Direct download failed"
@@ -143,32 +182,21 @@ jobs:
           done
           
           echo "success_count=${success}" >> $GITHUB_OUTPUT
-
-      - name: Create single archive (no splitting)
-        id: archive
-        run: |
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          mkdir -p "downloads_${TIMESTAMP}"
-          mv downloads/* "downloads_${TIMESTAMP}/" 2>/dev/null || true
-          PASSWORD="${{ github.event.inputs.zip_password }}"
           
-          if [ -n "$PASSWORD" ]; then
-            7z a -p"$PASSWORD" -mx=3 "archive_${TIMESTAMP}.7z" "downloads_${TIMESTAMP}/"
-          else
-            7z a -mx=3 "archive_${TIMESTAMP}.7z" "downloads_${TIMESTAMP}/"
-          fi
-          
-          echo "archive_name=archive_${TIMESTAMP}.7z" >> $GITHUB_OUTPUT
-          rm -rf "downloads_${TIMESTAMP}"
+          # List all archives created
+          echo "Created archives:"
+          ls -la *.7z 2>/dev/null || echo "No archives created"
 
-      - name: Commit and Push
+      - name: Commit and Push all archives
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add *.7z 2>/dev/null || true
           if ! git diff --staged --quiet; then
-            git commit -m "Add archive ${{ steps.archive.outputs.archive_name }}"
+            git commit -m "Add downloaded videos"
             git push origin main
+          else
+            echo "No archives to commit"
           fi
 
       - name: Summary
@@ -177,4 +205,4 @@ jobs:
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Successful downloads | ${{ steps.download_files.outputs.success_count }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Archive | ${{ steps.archive.outputs.archive_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Archives | Created with original file names |" >> $GITHUB_STEP_SUMMARY
