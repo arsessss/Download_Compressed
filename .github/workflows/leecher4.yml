@@ -28,18 +28,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Deno
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          echo "$HOME/.deno/bin" >> $PATH
       - name: Install yt-dlp
-        run: pip3 install yt-dlp && sudo apt-get install -y zip
+        run: |
+          pip3 install yt-dlp
+          sudo apt-get install -y zip
       - name: Use cookies from secret
         run: |
           echo "${{ secrets.YT_COOKIES }}" > cookies.txt
           echo "Cookies loaded from secret"
+          head -c 100 cookies.txt
       - name: Download
         run: |
+          export PATH="$HOME/.deno/bin:$PATH"
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           if [[ "$URL" == *"youtube"* ]]; then
-            yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "downloads/%(title)s.%(ext)s" "$URL"
+            echo "YouTube mode with Deno"
+            deno --version
+            yt-dlp --cookies cookies.txt \
+              --js-runtime deno \
+              -f "best[height<=${{ github.event.inputs.youtube_quality }}]" \
+              -o "downloads/%(title)s.%(ext)s" \
+              "$URL"
           else
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
             curl -L -o "downloads/$FILENAME" "$URL"
@@ -47,13 +62,17 @@ jobs:
       - name: Get filename
         run: |
           cd downloads
-          FIRST_FILE=$(ls | head -1)
-          BASENAME="${FIRST_FILE%.*}"
-          echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          if [ "$(ls -A)" ]; then
+            FIRST_FILE=$(ls | head -1)
+            BASENAME="${FIRST_FILE%.*}"
+            echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          fi
           cd ..
       - name: Create zip
+        if: env.BASENAME != ""
         run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
       - name: Push
+        if: env.BASENAME != ""
         run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
