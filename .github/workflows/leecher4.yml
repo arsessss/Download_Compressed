@@ -32,7 +32,6 @@ jobs:
         run: |
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
-          echo "$HOME/.deno/bin" >> $PATH
       - name: Install yt-dlp
         run: |
           pip3 install yt-dlp
@@ -41,7 +40,6 @@ jobs:
         run: |
           echo "${{ secrets.YT_COOKIES }}" > cookies.txt
           echo "Cookies loaded from secret"
-          head -c 100 cookies.txt
       - name: Download
         run: |
           export PATH="$HOME/.deno/bin:$PATH"
@@ -49,7 +47,6 @@ jobs:
           URL="${{ github.event.inputs.file_url_1 }}"
           if [[ "$URL" == *"youtube"* ]]; then
             echo "YouTube mode with Deno"
-            deno --version
             yt-dlp --cookies cookies.txt \
               --js-runtime deno \
               -f "best[height<=${{ github.event.inputs.youtube_quality }}]" \
@@ -62,17 +59,13 @@ jobs:
       - name: Get filename
         run: |
           cd downloads
-          if [ "$(ls -A)" ]; then
-            FIRST_FILE=$(ls | head -1)
-            BASENAME="${FIRST_FILE%.*}"
-            echo "BASENAME=$BASENAME" >> $GITHUB_ENV
-          fi
+          FIRST_FILE=$(ls | head -1)
+          BASENAME="${FIRST_FILE%.*}"
+          echo "BASENAME=$BASENAME" >> $GITHUB_ENV
           cd ..
       - name: Create zip
-        if: env.BASENAME != ""
         run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
       - name: Push
-        if: env.BASENAME != ""
         run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
