@@ -30,23 +30,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install yt-dlp
         run: pip3 install yt-dlp && sudo apt-get install -y zip
-      - name: Create cookies
+      - name: Use cookies from secret
         run: |
-          cat > cookies.txt << "EOF"
-# Netscape HTTP Cookie File
-.youtube.com	TRUE	/	TRUE	0	VISITOR_INFO1_LIVE	tI3-DVIcilc
-.youtube.com	TRUE	/	TRUE	0	__Secure-1PAPISID	9N0lmr6YxXFHjUhg/AH0ZCX-UsocxzegOM
-.youtube.com	TRUE	/	TRUE	0	__Secure-1PSID	g.a0007AhxenGQsnN0naCotUWUiNoxWaKmWdJ1klawmMp2boUqMd_TeT7BJFQ6j30socdbOZN7LQACgYKAbISARQSFQHGX2MiGjUKHf38LdWu9iFteRQMAxoVAUF8yKpwyLtuly3A77cJy5BkV15T0076
-          EOF
-          echo "Cookies created"
-          wc -l cookies.txt
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          echo "Cookies loaded from secret"
       - name: Download
         run: |
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           if [[ "$URL" == *"youtube"* ]]; then
-            echo "Testing cookies..."
-            yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "downloads/%(title)s.%(ext)s" "$URL" 2>&1
+            yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "downloads/%(title)s.%(ext)s" "$URL"
           else
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
             curl -L -o "downloads/$FILENAME" "$URL"
@@ -54,17 +47,13 @@ jobs:
       - name: Get filename
         run: |
           cd downloads
-          if [ -f "$(ls | head -1)" ]; then
-            FIRST_FILE=$(ls | head -1)
-            BASENAME="${FIRST_FILE%.*}"
-            echo "BASENAME=$BASENAME" >> $GITHUB_ENV
-          fi
+          FIRST_FILE=$(ls | head -1)
+          BASENAME="${FIRST_FILE%.*}"
+          echo "BASENAME=$BASENAME" >> $GITHUB_ENV
           cd ..
       - name: Create zip
-        if: env.BASENAME != ""
         run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
       - name: Push
-        if: env.BASENAME != ""
         run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
