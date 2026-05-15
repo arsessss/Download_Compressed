@@ -1,14 +1,14 @@
-name: Transfer file to GitHub
+name: Transfer file to GitHub (YouTube & TikTok)
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: Link
+        description: 'URL to download'
         required: true
         type: string
       youtube_quality:
-        description: Quality
+        description: 'YouTube quality'
         required: false
         type: choice
         default: '1080'
@@ -18,11 +18,7 @@ on:
           - '1080'
           - '720'
           - '480'
-      tiktok_watermark:
-        description: Watermark
-        required: false
-        type: boolean
-        default: true
+          - '360'
 
 permissions:
   contents: write
@@ -33,36 +29,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install
+      - name: Install yt-dlp with Deno
         run: |
           pip3 install yt-dlp
+          sudo apt-get update
           sudo apt-get install -y ffmpeg p7zip-full
           curl -fsSL https://deno.land/install.sh | sh
-          export PATH="$HOME/.deno/bin:$PATH"
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
           
-      - name: Cookies
+      - name: Setup cookies
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+            echo "✅ Cookies loaded"
+          else
+            echo "⚠️ No cookies found"
           fi
           
-      - name: Download
+      - name: Download with OLD working method
         run: |
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           
-          yt-dlp --cookies cookies.txt --extractor-args "youtube:player_client=tv,android_sdkless" --js-runtime deno -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
-                 
-      - name: Archive
-        run: |
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          7z a -mx=3 "download_${TIMESTAMP}.7z" downloads/
+          echo "Downloading: $URL"
+          echo "Quality: ${QUALITY}p"
           
-      - name: Push
+          yt-dlp --cookies cookies.txt --extractor-args "youtube:player_client=tv,android_sdkless" --js-runtime deno -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" --merge-output-format mp4 -o "downloads/video.%(ext)s" "$URL"
+          
+          if [ -f downloads/video.mp4 ]; then
+            echo "✅ Download successful!"
+            ls -la downloads/
+          else
+            echo "❌ Download failed - trying with best quality"
+            yt-dlp --cookies cookies.txt --extractor-args "youtube:player_client=tv,android_sdkless" --js-runtime deno -f "best" -o "downloads/video.mp4" "$URL"
+          fi
+          
+      - name: Create archive
         run: |
-          git config user.name "bot"
-          git config user.email "bot@users.noreply.github.com"
+          if [ -f downloads/video.mp4 ]; then
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            7z a -mx=3 "download_${TIMESTAMP}.7z" downloads/
+            echo "ARCHIVE=download_${TIMESTAMP}.7z" >> $GITHUB_ENV
+          else
+            echo "No file to archive"
+            exit 1
+          fi
+          
+      - name: Push to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add *.7z
-          git commit -m "Add archive" || echo "No changes"
+          git commit -m "Add downloaded video" || echo "No changes"
           git push origin main
