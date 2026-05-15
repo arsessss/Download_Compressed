@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'File URL (YouTube or direct link)'
+        description: 'Link 1 (required) - can be YouTube or direct link'
         required: true
         type: string
+        default: ''
       youtube_quality:
-        description: 'YouTube quality'
+        description: 'Quality for YouTube links'
         required: false
         type: choice
         default: '1080'
@@ -24,45 +25,142 @@ permissions:
   contents: write
 
 jobs:
-  download:
+  leech-split-file:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
 
-      - name: Clean old files
-        run: rm -f *.zip && rm -rf downloads
-
-      - name: Install yt-dlp
+      - name: Clean old archives
         run: |
-          pip3 install yt-dlp
-          sudo apt-get install -y zip
+          echo "Cleaning old archives..."
+          find . -type f \( -name "*.7z.*" -o -name "*.7z" -o -name "*.zip" \) -exec rm -v {} \;
+          find . -type d -name "downloads" -exec rm -rf {} \;
+          git rm --cached *.7z.* 2>/dev/null || true
+          git rm --cached *.7z 2>/dev/null || true
+          git rm --cached *.zip 2>/dev/null || true
+          git rm --cached -r downloads 2>/dev/null || true
+          echo "Old archives cleaned."
 
-      - name: Download (Android client method)
+      - name: Install Deno and yt-dlp with EJS support
         run: |
-          mkdir -p downloads
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          pip3 install "yt-dlp[default]" yt-dlp-ejs --break-system-packages || pip3 install "yt-dlp[default]" yt-dlp-ejs
+          curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz | tar -xJ
+          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
+          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+          rm -rf ffmpeg-master-latest-linux64-gpl
+          sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+
+      - name: Create cookies file from secret
+        run: |
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+
+      - name: Download file
+        id: download_files
+        run: |
+          mkdir -p files
           URL="${{ github.event.inputs.file_url_1 }}"
-          QUALITY="${{ github.event.inputs.youtube_quality }}"
+          YT_QUALITY="${{ github.event.inputs.youtube_quality }}"
           
-          if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "Using Android client to bypass blocks"
-            yt-dlp \
-              --extractor-args "youtube:player_client=android" \
-              -f "best[height<=${QUALITY}]" \
-              -o "downloads/video.%(ext)s" \
-              "$URL"
+          echo "========================================="
+          echo "Processing: $URL"
+          
+          if echo "$URL" | grep -qE "(youtube\.com|youtu\.be)"; then
+            echo "Detected YouTube link. Downloading with yt-dlp + Deno + cookies..."
+            
+            # Try multiple extraction methods to ensure success
+            yt-dlp --cookies cookies.txt \
+                   --extractor-args "youtube:player_client=tv,android_sdkless" \
+                   --js-runtime deno \
+                   -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
+                   --merge-output-format mp4 \
+                   -o "files/video.%(ext)s" \
+                   "$URL" || \
+            yt-dlp --cookies cookies.txt \
+                   --extractor-args "youtube:player_client=web" \
+                   --js-runtime deno \
+                   -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
+                   --merge-output-format mp4 \
+                   -o "files/video.%(ext)s" \
+                   "$URL"
+            
+            if [ -f files/video.mp4 ]; then
+              size=$(ls -lh files/video.mp4 | awk "{print $5}")
+              echo "Downloaded: video.mp4 ($size)"
+              echo "success_count=1" >> $GITHUB_OUTPUT
+            else
+              echo "Failed to download YouTube video"
+              echo "success_count=0" >> $GITHUB_OUTPUT
+              exit 1
+            fi
           else
+            echo "Normal direct download"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
-            curl -L -o "downloads/$FILENAME" "$URL"
+            if [ -z "$FILENAME" ]; then
+              FILENAME="file.dat"
+            fi
+            if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/$FILENAME" "$URL"; then
+              size=$(ls -lh "files/$FILENAME" | awk "{print $5}")
+              echo "Downloaded: $FILENAME ($size)"
+              echo "success_count=1" >> $GITHUB_OUTPUT
+            else
+              echo "Failed: $URL"
+              echo "success_count=0" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          fi
+          
+          echo "url_count=1" >> $GITHUB_OUTPUT
+
+      - name: Create zip archive
+        run: |
+          cd files
+          zip -r ../archive.zip .
+          cd ..
+          echo "Archive created: archive.zip"
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+
+      - name: Commit and Push
+        run: |
+          git add archive.zip
+          if ! git diff --staged --quiet; then
+            git commit -m "Add archive.zip"
+            push_success=false
+            max_attempts=15
+            for attempt in $(seq 1 $max_attempts); do
+              git pull --rebase origin main 2>/dev/null || true
+              if git push origin main; then
+                push_success=true
+                break
+              else
+                sleep 20
+              fi
+            done
+            if [ "$push_success" = false ]; then
+              exit 1
+            fi
           fi
 
-      - name: Create zip
-        run: cd downloads && zip -r ../archive.zip . && cd ..
-
-      - name: Push
+      - name: Summary
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add archive.zip
-          git commit -m "Add archive" || true
-          git push origin main
+          TOTAL_SIZE=$(du -sh archive.zip 2>/dev/null | awk "{print $1}")
+          [ -z "$TOTAL_SIZE" ] && TOTAL_SIZE="N/A"
+          echo "Job completed! Archive size: $TOTAL_SIZE"
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 📊 Execution Summary
+          | Item | Value |
+          |------|-------|
+          | Successful downloads | ${{ steps.download_files.outputs.success_count }} / ${{ steps.download_files.outputs.url_count }} |
+          | Archive size | ${TOTAL_SIZE} |
+          | Status | ✅ Success |
+          EOF
