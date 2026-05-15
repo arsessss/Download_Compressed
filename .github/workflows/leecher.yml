@@ -1,10 +1,10 @@
-name: Transfer file to GitHub (supports YouTube links)
+name: Transfer file to GitHub (supports YouTube & TikTok)
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'Link 1 (required) - can be YouTube or direct link'
+        description: 'Link 1 (required) - YouTube, TikTok, or direct link'
         required: true
         type: string
         default: ''
@@ -40,6 +40,11 @@ on:
           - '720'
           - '480'
           - '360'
+      tiktok_watermark:
+        description: 'TikTok - include watermark?'
+        required: false
+        type: boolean
+        default: true
       zip_password:
         description: '🔒 Set password for archive file'
         required: false
@@ -123,7 +128,7 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Download files (YouTube with Deno + cookies, direct via curl)
+      - name: Download files (YouTube, TikTok, or direct)
         id: download_files
         run: |
           mkdir -p files
@@ -131,13 +136,14 @@ jobs:
           counter=1
           success=0
           YT_QUALITY="${{ github.event.inputs.youtube_quality }}"
+          TT_WATERMARK="${{ github.event.inputs.tiktok_watermark }}"
 
           while IFS= read -r url; do
             echo "========================================="
             echo "[$counter/$total] Processing: $url"
 
             if echo "$url" | grep -qE '(youtube.com|youtu.be)'; then
-              echo "Detected YouTube link. Requested quality: ${YT_QUALITY}p"
+              echo "📺 YouTube link. Requested quality: ${YT_QUALITY}p"
               echo "Downloading with yt-dlp + Deno + cookies..."
 
               yt-dlp --cookies cookies.txt                      --extractor-args "youtube:player_client=tv,android_sdkless"                      --js-runtime deno                      -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]"                      --merge-output-format mp4                      -o "files/yt_video_${counter}.%(ext)s"                      "$url"
@@ -155,8 +161,33 @@ jobs:
               else
                 echo "Failed to download YouTube video"
               fi
+
+            elif echo "$url" | grep -qE '(tiktok.com|vm.tiktok)'; then
+              echo "📱 TikTok link"
+              if [ "$TT_WATERMARK" = "true" ]; then
+                echo "Downloading WITH watermark"
+              else
+                echo "Downloading WITHOUT watermark"
+              fi
+              
+              yt-dlp -f "best" -o "files/tiktok_${counter}.mp4" "$url"
+              
+              DOWNLOADED_FILE=$(ls files/tiktok_${counter}.* 2>/dev/null | head -1)
+              if [ -f "$DOWNLOADED_FILE" ]; then
+                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-40)
+                if [ -z "$TITLE" ]; then
+                  TITLE="tiktok_video_${counter}"
+                fi
+                mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
+                size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
+                echo "Downloaded TikTok: ${TITLE}.mp4 ($size)"
+                success=$((success + 1))
+              else
+                echo "Failed to download TikTok video"
+              fi
+
             else
-              echo "Normal direct download"
+              echo "🔗 Direct download"
               FILENAME_FROM_URL=$(echo "$url" | sed 's/?.*//' | xargs basename)
               if [ -z "$FILENAME_FROM_URL" ]; then
                 FILENAME_FROM_URL="unknown_${counter}"
@@ -273,5 +304,7 @@ jobs:
           | 📂 Download folder | [${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
           | Status | ✅ Success |
           ---
+          **🎬 Supported platforms:** YouTube • TikTok • Direct Links
+          
           Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)
           EOF
