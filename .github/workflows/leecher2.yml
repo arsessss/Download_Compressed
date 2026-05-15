@@ -1,84 +1,30 @@
-name: Leecher360D - Fixed
+name: Minimal Test
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'Link 1 (required) - can be YouTube or direct link'
+        description: 'URL to download'
         required: true
         type: string
-        default: ''
-      youtube_quality:
-        description: 'Quality for YouTube links'
-        required: false
-        type: choice
-        default: '1080'
-        options:
-          - '2160'
-          - '1440'
-          - '1080'
-          - '720'
-          - '480'
-          - '360'
+        default: 'https://speed.hetzner.de/100MB.bin'
 
 permissions:
   contents: write
 
 jobs:
-  download:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Delete old files
+      - name: Download
+        run: curl -L -o testfile.bin "${{ github.event.inputs.file_url_1 }}"
+      - name: Zip
+        run: zip test.zip testfile.bin
+      - name: Commit
         run: |
-          rm -f *.zip
-          rm -rf downloads
-
-      - name: Install yt-dlp and dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zip
-          pip3 install yt-dlp[default] yt-dlp-ejs
-
-      - name: Create cookies file
-        run: |
-          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-          echo "Cookies file created"
-
-      - name: Download file
-        run: |
-          mkdir -p downloads
-          URL="${{ github.event.inputs.file_url_1 }}"
-          QUALITY="${{ github.event.inputs.youtube_quality }}"
-          echo "URL: $URL"
-          echo "Quality: $QUALITY"
-          
-          if echo "$URL" | grep -qE "youtube.com|youtu.be"; then
-            echo "YouTube video detected"
-            yt-dlp --cookies cookies.txt \
-                   --extractor-args "youtube:player_client=tv,android_sdkless" \
-                   --js-runtime deno \
-                   -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" \
-                   --merge-output-format mp4 \
-                   -o "downloads/video.%(ext)s" "$URL"
-          else
-            echo "Direct download"
-            curl -L -o "downloads/file.dat" "$URL"
-          fi
-          
-          echo "Download complete"
-          ls -la downloads/
-
-      - name: Create zip
-        run: |
-          zip -r archive.zip downloads/
-          echo "ZIP_NAME=archive.zip" >> $GITHUB_ENV
-
-      - name: Push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add archive.zip
-          git commit -m "Add archive" || true
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add test.zip
+          git commit -m "test" || true
           git push origin main
