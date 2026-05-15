@@ -46,7 +46,7 @@ on:
         type: boolean
         default: true
       zip_password:
-        description: '🔒 Set password for archive file'
+        description: 'Set password for archive file'
         required: false
         type: string
         default: ''
@@ -71,21 +71,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
-          sudo apt-get update -qq
+          pip3 install yt-dlp
+          sudo apt-get update
           sudo apt-get install -y ffmpeg p7zip-full
 
-      - name: Create cookies file (if secret exists)
+      - name: Create cookies file
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "✅ Cookies file created"
-          else
-            echo "⚠️ No cookies secret found"
           fi
 
-      - name: Download and archive files
-        id: download_files
+      - name: Download files
+        id: download
         run: |
           mkdir -p downloads
           success=0
@@ -97,84 +94,39 @@ jobs:
               continue
             fi
             
-            echo "Processing [$counter]: $url"
+            echo "Processing: $url"
             
-            if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "📺 YouTube"
-              
-              # Get video title first
-              TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-50)
-              if [ -z "$TITLE" ]; then
-                TITLE="youtube_video_${counter}"
-              fi
-              
+            if echo "$url" | grep -qE '(youtube|youtu.be)'; then
               if [ -f cookies.txt ]; then
-                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "downloads/${TITLE}.mp4" "$url"
+                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
               else
-                yt-dlp -f "best[height<=${YT_QUALITY}]" -o "downloads/${TITLE}.mp4" "$url"
+                yt-dlp -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
               fi
               
-              if [ -f "downloads/${TITLE}.mp4" ]; then
-                echo "✅ Downloaded: ${TITLE}.mp4"
-                # Create archive with the video name
-                if [ -n "${{ github.event.inputs.zip_password }}" ]; then
-                  7z a -p"${{ github.event.inputs.zip_password }}" -mx=3 "${TITLE}.7z" "downloads/${TITLE}.mp4"
-                else
-                  7z a -mx=3 "${TITLE}.7z" "downloads/${TITLE}.mp4"
-                fi
-                rm "downloads/${TITLE}.mp4"
+              if [ -f "downloads/video_${counter}.mp4" ]; then
+                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-50)
+                mv "downloads/video_${counter}.mp4" "downloads/${TITLE}.mp4"
+                echo "Downloaded: ${TITLE}.mp4"
                 success=$((success + 1))
-              else
-                echo "❌ YouTube download failed"
               fi
               
-            elif echo "$url" | grep -qE '(tiktok\.com|vm\.tiktok)'; then
-              echo "📱 TikTok"
+            elif echo "$url" | grep -qE '(tiktok|vm.tiktok)'; then
+              yt-dlp -f "best" -o "downloads/tiktok_${counter}.mp4" "$url"
               
-              # Get video title first
-              TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-40)
-              if [ -z "$TITLE" ]; then
-                TITLE="tiktok_video_${counter}"
-              fi
-              
-              yt-dlp -f "best" -o "downloads/${TITLE}.mp4" "$url"
-              
-              if [ -f "downloads/${TITLE}.mp4" ]; then
-                echo "✅ Downloaded: ${TITLE}.mp4"
-                # Create archive with the video name
-                if [ -n "${{ github.event.inputs.zip_password }}" ]; then
-                  7z a -p"${{ github.event.inputs.zip_password }}" -mx=3 "${TITLE}.7z" "downloads/${TITLE}.mp4"
-                else
-                  7z a -mx=3 "${TITLE}.7z" "downloads/${TITLE}.mp4"
-                fi
-                rm "downloads/${TITLE}.mp4"
+              if [ -f "downloads/tiktok_${counter}.mp4" ]; then
+                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-40)
+                mv "downloads/tiktok_${counter}.mp4" "downloads/${TITLE}.mp4"
+                echo "Downloaded: ${TITLE}.mp4"
                 success=$((success + 1))
-              else
-                echo "❌ TikTok download failed"
               fi
               
             else
-              echo "🔗 Direct"
               FILENAME=$(basename "$url" | cut -d'?' -f1)
-              if [ -z "$FILENAME" ]; then
-                FILENAME="file_${counter}"
-              fi
-              
-              curl -L --fail -o "downloads/${FILENAME}" "$url"
-              
+              [ -z "$FILENAME" ] && FILENAME="file_${counter}"
+              curl -L -o "downloads/${FILENAME}" "$url"
               if [ -f "downloads/${FILENAME}" ]; then
-                echo "✅ Downloaded: ${FILENAME}"
-                BASENAME="${FILENAME%.*}"
-                # Create archive with the file name
-                if [ -n "${{ github.event.inputs.zip_password }}" ]; then
-                  7z a -p"${{ github.event.inputs.zip_password }}" -mx=3 "${BASENAME}.7z" "downloads/${FILENAME}"
-                else
-                  7z a -mx=3 "${BASENAME}.7z" "downloads/${FILENAME}"
-                fi
-                rm "downloads/${FILENAME}"
+                echo "Downloaded: ${FILENAME}"
                 success=$((success + 1))
-              else
-                echo "❌ Direct download failed"
               fi
             fi
             
@@ -182,27 +134,34 @@ jobs:
           done
           
           echo "success_count=${success}" >> $GITHUB_OUTPUT
-          
-          # List all archives created
-          echo "Created archives:"
-          ls -la *.7z 2>/dev/null || echo "No archives created"
 
-      - name: Commit and Push all archives
+      - name: Create archive
+        id: archive
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.7z 2>/dev/null || true
-          if ! git diff --staged --quiet; then
-            git commit -m "Add downloaded videos"
-            git push origin main
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          PASSWORD="${{ github.event.inputs.zip_password }}"
+          
+          if [ -n "$PASSWORD" ]; then
+            7z a -p"$PASSWORD" -mx=3 "download_${TIMESTAMP}.7z" downloads/
           else
-            echo "No archives to commit"
+            7z a -mx=3 "download_${TIMESTAMP}.7z" downloads/
           fi
+          
+          echo "archive_name=download_${TIMESTAMP}.7z" >> $GITHUB_OUTPUT
+          rm -rf downloads
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add *.7z
+          git commit -m "Add downloaded archive" || echo "No changes"
+          git push origin main
 
       - name: Summary
         run: |
-          echo "## ✅ Download Complete" >> $GITHUB_STEP_SUMMARY
+          echo "Download Complete" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Successful downloads | ${{ steps.download_files.outputs.success_count }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Archives | Created with original file names |" >> $GITHUB_STEP_SUMMARY
+          echo "| Successful downloads | ${{ steps.download.outputs.success_count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Archive | ${{ steps.archive.outputs.archive_name }} |" >> $GITHUB_STEP_SUMMARY
