@@ -1,10 +1,10 @@
-name: Transfer file to GitHub - v2
+name: Transfer file to GitHub - v2 (ZIP with cleanup)
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'Link 1 (required)'
+        description: 'Link 1 (required) - can be YouTube or direct link'
         required: true
         type: string
         default: ''
@@ -25,14 +25,29 @@ permissions:
   contents: write
 
 jobs:
-  download:
+  download-and-archive:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download
-        run: curl -L -o file.dat "${{ github.event.inputs.file_url_1 }}"
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: file
-          path: file.dat
+
+      - name: Delete old zip files
+        run: |
+          echo "Deleting old .zip files..."
+          rm -f *.zip
+          echo "Old archives deleted."
+
+      - name: Install yt-dlp and zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
+          pip3 install yt-dlp
+
+      - name: Download file (YouTube or direct)
+        run: |
+          mkdir -p downloads
+          URL="${{ github.event.inputs.file_url_1 }}"
+          QUALITY="${{ github.event.inputs.youtube_quality }}"
+          if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
+            echo "Detected YouTube link"
+            yt-dlp -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" \
+                   --merge-output-format mp4 \
