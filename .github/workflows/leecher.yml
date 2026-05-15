@@ -1,10 +1,10 @@
-name: Transfer file to GitHub (YouTube & TikTok)
+name: Transfer file to GitHub
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'URL to download'
+        description: 'Link 1 (required)'
         required: true
         type: string
       youtube_quality:
@@ -29,53 +29,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install yt-dlp with Deno
+      - name: Install Deno and yt-dlp
         run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
           pip3 install yt-dlp
           sudo apt-get update
           sudo apt-get install -y ffmpeg p7zip-full
-          curl -fsSL https://deno.land/install.sh | sh
-          echo "$HOME/.deno/bin" >> $GITHUB_PATH
-          
+      
       - name: Setup cookies
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "✅ Cookies loaded"
-          else
-            echo "⚠️ No cookies found"
+            echo "Cookies loaded"
           fi
-          
-      - name: Download with OLD working method
+      
+      - name: Download
         run: |
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           
-          echo "Downloading: $URL"
-          echo "Quality: ${QUALITY}p"
-          
-          yt-dlp --cookies cookies.txt --extractor-args "youtube:player_client=tv,android_sdkless" --js-runtime deno -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" --merge-output-format mp4 -o "downloads/video.%(ext)s" "$URL"
+          yt-dlp --cookies cookies.txt --extractor-args "youtube:player_client=tv,android_sdkless" --js-runtime deno -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
           
           if [ -f downloads/video.mp4 ]; then
-            echo "✅ Download successful!"
+            echo "Download successful"
             ls -la downloads/
           else
-            echo "❌ Download failed - trying with best quality"
-            yt-dlp --cookies cookies.txt --extractor-args "youtube:player_client=tv,android_sdkless" --js-runtime deno -f "best" -o "downloads/video.mp4" "$URL"
-          fi
-          
-      - name: Create archive
-        run: |
-          if [ -f downloads/video.mp4 ]; then
-            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-            7z a -mx=3 "download_${TIMESTAMP}.7z" downloads/
-            echo "ARCHIVE=download_${TIMESTAMP}.7z" >> $GITHUB_ENV
-          else
-            echo "No file to archive"
+            echo "Download failed"
             exit 1
           fi
-          
+      
+      - name: Create archive
+        run: |
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          7z a -mx=3 "download_${TIMESTAMP}.7z" downloads/
+      
       - name: Push to repo
         run: |
           git config user.name "github-actions[bot]"
