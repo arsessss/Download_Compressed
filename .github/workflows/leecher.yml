@@ -82,8 +82,8 @@ jobs:
         if: ${{ github.event.inputs.delete_old_archives == 'true' }}
         run: |
           echo "Cleaning old archives..."
-          find . -maxdepth 1 -type f \( -name "*.7z.*" -o -name "*.7z" \) -exec rm -v {} \;
-          find . -maxdepth 1 -type d -name "downloads" -exec rm -rf {} \;
+          find . -maxdepth 1 -type f ( -name "*.7z.*" -o -name "*.7z" ) -exec rm -v {} ;
+          find . -maxdepth 1 -type d -name "downloads" -exec rm -rf {} ;
           git rm --cached *.7z.* 2>/dev/null || true
           git rm --cached *.7z 2>/dev/null || true
           git rm --cached -r downloads 2>/dev/null || true
@@ -107,7 +107,7 @@ jobs:
       - name: Parse inputs
         id: parse
         run: |
-          SIZE=$(echo "${{ github.event.inputs.split_size }}" | grep -oP '\d+')
+          SIZE=$(echo "${{ github.event.inputs.split_size }}" | grep -oP 'd+')
           echo "split_mb=${SIZE:-95}" >> $GITHUB_OUTPUT
           cat > urls.txt << URLEOF
           ${{ github.event.inputs.file_url_1 }}
@@ -117,7 +117,7 @@ jobs:
           ${{ github.event.inputs.file_url_5 }}
           URLEOF
           sed -i '/^$/d' urls.txt
-          sed -i 's/^[ \t]*//;s/[ \t]*$//' urls.txt
+          sed -i 's/^[ 	]*//;s/[ 	]*$//' urls.txt
           total=$(wc -l < urls.txt)
           echo "url_count=${total}" >> $GITHUB_OUTPUT
           echo "URL count: ${total}"
@@ -136,17 +136,11 @@ jobs:
             echo "========================================="
             echo "[$counter/$total] Processing: $url"
 
-            if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
+            if echo "$url" | grep -qE '(youtube.com|youtu.be)'; then
               echo "Detected YouTube link. Requested quality: ${YT_QUALITY}p"
               echo "Downloading with yt-dlp + Deno + cookies..."
 
-              yt-dlp --cookies cookies.txt \
-                     --extractor-args "youtube:player_client=tv,android_sdkless" \
-                     --js-runtime deno \
-                     -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
-                     --merge-output-format mp4 \
-                     -o "files/yt_video_${counter}.%(ext)s" \
-                     "$url"
+              yt-dlp --cookies cookies.txt                      --extractor-args "youtube:player_client=tv,android_sdkless"                      --js-runtime deno                      -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]"                      --merge-output-format mp4                      -o "files/yt_video_${counter}.%(ext)s"                      "$url"
 
               DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
               if [ -f "$DOWNLOADED_FILE" ]; then
@@ -280,137 +274,4 @@ jobs:
           | Status | ✅ Success |
           ---
           Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)
-          EOF          - '2160'
-          - '1440'
-          - '1080'
-          - '720'
-          - '480'
-          - '360'
-      tiktok_watermark:
-        description: 'TikTok - include watermark?'
-        required: false
-        type: boolean
-        default: true
-
-permissions:
-  contents: write
-
-concurrency:
-  group: download-queue
-  cancel-in-progress: false
-  queue: max
-
-jobs:
-  download-and-archive:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Install dependencies
-        run: |
-          pip3 install yt-dlp --break-system-packages || pip3 install yt-dlp
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg p7zip-full
-
-      - name: Create cookies file (if secret exists)
-        run: |
-          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
-            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "✅ Cookies file created"
-          else
-            echo "⚠️ No cookies secret found"
-          fi
-
-      - name: Download files
-        id: download_files
-        run: |
-          mkdir -p downloads
-          success=0
-          counter=1
-          YT_QUALITY="${{ github.event.inputs.youtube_quality }}"
-          
-          for url in "${{ github.event.inputs.file_url_1 }}" "${{ github.event.inputs.file_url_2 }}" "${{ github.event.inputs.file_url_3 }}" "${{ github.event.inputs.file_url_4 }}" "${{ github.event.inputs.file_url_5 }}"; do
-            if [ -z "$url" ]; then
-              continue
-            fi
-            
-            echo "Processing [$counter]: $url"
-            
-            if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "📺 YouTube"
-              if [ -f cookies.txt ]; then
-                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
-              else
-                yt-dlp -f "best[height<=${YT_QUALITY}]" -o "downloads/video_${counter}.mp4" "$url"
-              fi
-              if [ -f "downloads/video_${counter}.mp4" ]; then
-                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-50)
-                mv "downloads/video_${counter}.mp4" "downloads/${TITLE}.mp4"
-                echo "✅ Downloaded: ${TITLE}.mp4"
-                success=$((success + 1))
-              else
-                echo "❌ YouTube download failed"
-              fi
-              
-            elif echo "$url" | grep -qE '(tiktok\.com|vm\.tiktok)'; then
-              echo "📱 TikTok"
-              yt-dlp -f "best" -o "downloads/tiktok_${counter}.mp4" "$url"
-              if [ -f "downloads/tiktok_${counter}.mp4" ]; then
-                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | sed 's/[^a-zA-Z0-9._-]/_/g' | cut -c1-40)
-                mv "downloads/tiktok_${counter}.mp4" "downloads/${TITLE}.mp4"
-                echo "✅ Downloaded: ${TITLE}.mp4"
-                success=$((success + 1))
-              else
-                echo "❌ TikTok download failed"
-              fi
-              
-            else
-              echo "🔗 Direct"
-              FILENAME=$(basename "$url" | cut -d'?' -f1)
-              curl -L --fail -o "downloads/${FILENAME}" "$url"
-              if [ -f "downloads/${FILENAME}" ]; then
-                echo "✅ Downloaded: ${FILENAME}"
-                success=$((success + 1))
-              else
-                echo "❌ Direct download failed"
-              fi
-            fi
-            
-            counter=$((counter + 1))
-          done
-          
-          echo "success_count=${success}" >> $GITHUB_OUTPUT
-
-      - name: Create archive
-        id: archive
-        run: |
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          mkdir -p "downloads_${TIMESTAMP}"
-          mv downloads/* "downloads_${TIMESTAMP}/" 2>/dev/null || true
-          
-          7z a -mx=3 "archive_${TIMESTAMP}.7z" "downloads_${TIMESTAMP}/"
-          
-          echo "archive_name=archive_${TIMESTAMP}.7z" >> $GITHUB_OUTPUT
-          rm -rf "downloads_${TIMESTAMP}"
-
-      - name: Commit and Push
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.7z 2>/dev/null || true
-          if ! git diff --staged --quiet; then
-            git commit -m "Add archive ${{ steps.archive.outputs.archive_name }}"
-            git push origin main
-          fi
-
-      - name: Summary
-        run: |
-          echo "## ✅ Download Complete" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Successful downloads | ${{ steps.download_files.outputs.success_count }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Archive | ${{ steps.archive.outputs.archive_name }} |" >> $GITHUB_STEP_SUMMARY          fi
+          EOF
