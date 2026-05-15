@@ -41,7 +41,7 @@ on:
           - '480'
           - '360'
       zip_password:
-        description: '🔒 Set password for archive file'
+        description: 'ð Set password for archive file'
         required: false
         type: string
         default: ''
@@ -82,7 +82,7 @@ jobs:
         if: ${{ github.event.inputs.delete_old_archives == 'true' }}
         run: |
           echo "Cleaning old archives..."
-          find . -maxdepth 1 -type f \( -name "*.7z.*" -o -name "*.7z" \) -exec rm -v {} \;
+          find . -type f \( -name "*.7z.*" -o -name "*.7z" \) -exec rm -v {} \;
           find . -maxdepth 1 -type d -name "downloads" -exec rm -rf {} \;
           git rm --cached *.7z.* 2>/dev/null || true
           git rm --cached *.7z 2>/dev/null || true
@@ -269,15 +269,15 @@ jobs:
           [ -z "$TOTAL_SIZE" ] && TOTAL_SIZE="N/A"
           echo "Job completed! Folder: $FOLDER, Size: $TOTAL_SIZE"
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 📊 Execution Summary
+          ## ð Execution Summary
           | Item | Value |
           |------|-------|
           | Successful downloads | ${{ steps.download_files.outputs.success_count }} / ${{ steps.parse.outputs.url_count }} |
           | Files processed | ${{ steps.process_files.outputs.processed_count }} |
           | Max chunk size | ${{ steps.parse.outputs.split_mb }} MB |
           | Total size | ${TOTAL_SIZE} |
-          | 📂 Download folder | [${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
-          | Status | ✅ Success |
+          | ð Download folder | [${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
+          | Status | â Success |
           ---
           Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)
           EOF
