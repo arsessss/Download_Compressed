@@ -4,12 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'Link 1 (required) - can be YouTube or direct link'
+        description: 'Link 1 (required)'
         required: true
         type: string
-        default: ''
       youtube_quality:
-        description: 'Quality for YouTube links'
+        description: 'YouTube quality'
         required: false
         type: choice
         default: '1080'
@@ -27,81 +26,44 @@ permissions:
 jobs:
   download:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Clean old files
-        run: rm -f *.zip *.log && rm -rf downloads
+        run: rm -f *.zip *.log
 
-      - name: Install Deno and yt-dlp
+      - name: Install yt-dlp
         run: |
-          curl -fsSL https://deno.land/install.sh | sh
-          echo "$HOME/.deno/bin" >> $GITHUB_PATH
           pip3 install yt-dlp
           sudo apt-get install -y zip
 
-      - name: Setup cookies
+      - name: Download and log
         run: |
-          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
-            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-          fi
-
-      - name: Download (with logging)
-        run: |
-          mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
-          LOG_FILE="download_log.txt"
-          
-          echo "=== DOWNLOAD LOG ===" > $LOG_FILE
-          echo "URL: $URL" >> $LOG_FILE
-          echo "Quality: $QUALITY" >> $LOG_FILE
-          echo "Time: $(date)" >> $LOG_FILE
-          echo "" >> $LOG_FILE
-          
-          if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube mode" | tee -a $LOG_FILE
-            yt-dlp --cookies cookies.txt \
-              --extractor-args "youtube:player_client=tv,android_sdkless" \
-              --js-runtime deno \
-              -f "best[height<=${QUALITY}]" \
-              -o "downloads/%(title)s.%(ext)s" \
-              "$URL" 2>&1 | tee -a $LOG_FILE
-          else
-            echo "Direct mode" | tee -a $LOG_FILE
-            curl -L -o "downloads/$(basename "$URL" | cut -d"?" -f1)" "$URL" 2>&1 | tee -a $LOG_FILE
-          fi
-          
-          echo "" >> $LOG_FILE
-          echo "Exit code: $?" >> $LOG_FILE
-          echo "=== END LOG ===" >> $LOG_FILE
+          {
+            echo "=== DOWNLOAD LOG ==="
+            echo "URL: $URL"
+            echo "Quality: $QUALITY"
+            echo "Time: $(date)"
+            echo ""
+            if [[ "$URL" == *"youtube"* ]]; then
+              echo "YouTube mode"
+              yt-dlp -f "best[height<=${QUALITY}]" -o "video.mp4" "$URL" 2>&1
+            else
+              echo "Direct mode"
+              curl -L -o "file.dat" "$URL" 2>&1
+            fi
+            echo ""
+            echo "Exit code: $?"
+            echo "=== END ==="
+          } | tee download.log
 
       - name: Save logs
-        if: always()
         run: |
-          cp download_log.txt logs.txt
-          echo "LOGS_SAVED=true" >> $GITHUB_ENV
-
-      - name: Get filename
-        if: success()
-        run: |
-          cd downloads
-          if [ "$(ls -A)" ]; then
-            FIRST_FILE=$(ls | head -1)
-            BASENAME="${FIRST_FILE%.*}"
-            echo "BASENAME=$BASENAME" >> $GITHUB_ENV
-          fi
-          cd ..
-
-      - name: Create zip
-        if: success() && env.BASENAME != ""
-        run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
-
-      - name: Commit logs and files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp download.log logs.txt
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
           git add logs.txt *.zip 2>/dev/null || true
-          git commit -m "Add download logs and files" || echo "No changes"
+          git commit -m "Add logs" || true
           git push origin main
