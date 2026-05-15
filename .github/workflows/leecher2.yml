@@ -1,30 +1,61 @@
-name: Minimal Test
+name: Leech360D Downloader
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'URL to download'
+        description: 'File URL (YouTube or direct link)'
         required: true
         type: string
-        default: 'https://speed.hetzner.de/100MB.bin'
+      youtube_quality:
+        description: 'YouTube quality'
+        required: false
+        type: choice
+        default: '1080'
+        options:
+          - '2160'
+          - '1440'
+          - '1080'
+          - '720'
+          - '480'
+          - '360'
 
 permissions:
   contents: write
 
 jobs:
-  test:
+  download:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download
-        run: curl -L -o testfile.bin "${{ github.event.inputs.file_url_1 }}"
-      - name: Zip
-        run: zip test.zip testfile.bin
-      - name: Commit
+
+      - name: Delete old zip
+        run: rm -f *.zip
+
+      - name: Install yt-dlp
         run: |
-          git config user.name "bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add test.zip
-          git commit -m "test" || true
+          sudo apt-get update
+          sudo apt-get install -y zip
+          pip3 install yt-dlp
+
+      - name: Download
+        run: |
+          URL="${{ github.event.inputs.file_url_1 }}"
+          QUALITY="${{ github.event.inputs.youtube_quality }}"
+          mkdir -p downloads
+          if echo "$URL" | grep -qE "youtube.com|youtu.be"; then
+            yt-dlp -f "bestvideo[height<=${QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${QUALITY}]" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
+          else
+            curl -L -o "downloads/file.dat" "$URL"
+          fi
+
+      - name: Create zip
+        run: zip -r archive.zip downloads/
+
+      - name: Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add archive.zip
+          git commit -m "Add archive" || true
           git push origin main
