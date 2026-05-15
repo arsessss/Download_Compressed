@@ -1,4 +1,5 @@
 name: Transfer file to GitHub (supports YouTube & TikTok)
+
 on:
   workflow_dispatch:
     inputs:
@@ -104,7 +105,7 @@ jobs:
           rm -rf ffmpeg-master-latest-linux64-gpl
           sudo apt-get update -qq && sudo apt-get install -y p7zip-full
 
-      - name: Clear yt-dlp cache
+      - name: Clear yt-dlp cache (aggressive)
         run: |
           rm -rf ~/.cache/yt-dlp
           echo "✅ Cleared yt-dlp cache"
@@ -112,14 +113,6 @@ jobs:
       - name: Create cookies file from secret
         run: |
           echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-
-      - name: Debug - Check Input URL
-        run: |
-          echo "The URL being processed is: ${{ github.event.inputs.file_url_1 }}"
-          if [[ -z "${{ github.event.inputs.file_url_1 }}" ]]; then
-            echo "❌ Error: file_url_1 is empty!"
-            exit 1
-          fi
 
       - name: Parse inputs
         id: parse
@@ -143,6 +136,7 @@ jobs:
       - name: Download files (YouTube, TikTok, or direct)
         id: download_files
         run: |
+          rm -rf files
           mkdir -p files
           total=${{ steps.parse.outputs.url_count }}
           counter=1
@@ -158,7 +152,7 @@ jobs:
               echo "📺 YouTube link. Requested quality: ${YT_QUALITY}p"
               echo "Downloading with yt-dlp + Deno + cookies..."
 
-              yt-dlp --no-cache-dir --cookies cookies.txt \
+              yt-dlp --no-cache-dir --rm-cache-dir --cookies cookies.txt \
                      --extractor-args "youtube:player_client=tv,android_sdkless" \
                      --js-runtime deno \
                      -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
@@ -188,7 +182,7 @@ jobs:
                 echo "Downloading WITHOUT watermark"
               fi
               
-              yt-dlp -f "best" -o "files/tiktok_${counter}.mp4" "$url"
+              yt-dlp --no-cache-dir --rm-cache-dir -f "best" -o "files/tiktok_${counter}.mp4" "$url"
               
               DOWNLOADED_FILE=$(ls files/tiktok_${counter}.* 2>/dev/null | head -1)
               if [ -f "$DOWNLOADED_FILE" ]; then
