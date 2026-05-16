@@ -38,7 +38,7 @@ jobs:
           sudo apt-get install -y zip
       - name: Use cookies
         run: echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-      - name: Run download (always continues)
+      - name: Run download
         id: download
         run: |
           export PATH="$HOME/.deno/bin:$PATH"
@@ -73,10 +73,10 @@ jobs:
             cd ..
             echo "BASENAME=$BASENAME" >> $GITHUB_ENV
           fi
-      - name: Push logs
+      - name: Push logs and files
         run: |
-          git config user.name "bot"
-          git config.user.email "bot@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add logs.txt *.zip 2>/dev/null || true
-          git commit -m "Update logs" || true
+          git commit -m "Update logs and files" || true
           git push origin main
