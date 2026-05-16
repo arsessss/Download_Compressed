@@ -45,6 +45,7 @@ jobs:
       - name: Download and log
         run: |
           export PATH="$HOME/.deno/bin:$PATH"
+          mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           {
@@ -63,7 +64,8 @@ jobs:
                 "$URL" 2>&1
             else
               echo "Direct mode"
-              curl -L -o "downloads/file.dat" "$URL" 2>&1
+              FILENAME=$(basename "$URL" | cut -d"?" -f1)
+              curl -L -o "downloads/$FILENAME" "$URL" 2>&1
             fi
             echo ""
             echo "Exit code: $?"
@@ -84,8 +86,8 @@ jobs:
       - name: Save logs and push
         run: |
           cp download.log logs.txt
-          git config user.name "bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add logs.txt "${BASENAME}.zip" 2>/dev/null || true
-          git commit -m "Add ${BASENAME}.zip and logs" || true
-          git push origin main
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add logs.txt *.zip 2>/dev/null || true
+          git commit -m "Add ${BASENAME}.zip and logs" || echo "No changes to commit"
+          git push origin main || echo "Push failed but continuing"
