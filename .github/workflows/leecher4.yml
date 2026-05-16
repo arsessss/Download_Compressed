@@ -36,45 +36,41 @@ jobs:
         run: |
           pip3 install yt-dlp
           sudo apt-get install -y zip
-      - name: Use cookies from secret
-        run: |
-          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-      - name: Download
+      - name: Use cookies
+        run: echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+      - name: Run download
+        id: download
+        continue-on-error: true
         run: |
           export PATH="$HOME/.deno/bin:$PATH"
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
-          (
-            echo "=== DOWNLOAD LOG ==="
-            echo "URL: $URL"
-            echo "Quality: $QUALITY"
-            echo "Time: $(date)"
-            echo ""
-            if [[ "$URL" == *"youtube"* ]]; then
-              echo "YouTube mode with Deno"
-              yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${QUALITY}]" -o "downloads/%(title)s.%(ext)s" "$URL"
-            else
-              FILENAME=$(basename "$URL" | cut -d"?" -f1)
-              curl -L -o "downloads/$FILENAME" "$URL"
-            fi
-            echo ""
-            echo "Exit code: $?"
-            echo "=== END LOG ==="
-          ) | tee logs.txt
-      - name: Get filename
+          if [[ "$URL" == *"youtube"* ]]; then
+            yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${QUALITY}]" -o "downloads/video.mp4" "$URL" 2>&1 | tee output.log
+          else
+            FILENAME=$(basename "$URL" | cut -d"?" -f1)
+            curl -L -o "downloads/$FILENAME" "$URL" 2>&1 | tee output.log
+          fi
+          echo "status=$?" >> $GITHUB_OUTPUT
+      - name: Save logs
+        if: always()
+        run: |
+          cp output.log logs.txt 2>/dev/null || echo "No output captured" > logs.txt
+          echo "Logs saved"
+      - name: Zip files
+        if: success()
         run: |
           cd downloads
           FIRST_FILE=$(ls | head -1)
           BASENAME="${FIRST_FILE%.*}"
-          echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          zip -r "../${BASENAME}.zip" .
           cd ..
-      - name: Create zip
-        run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
-      - name: Push logs and archive
+      - name: Push
+        if: always()
         run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
-          git add logs.txt "${BASENAME}.zip"
-          git commit -m "Add ${BASENAME}.zip and logs" || true
+          git add logs.txt *.zip 2>/dev/null || true
+          git commit -m "Update logs and files" || true
           git push origin main
