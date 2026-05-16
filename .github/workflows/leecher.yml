@@ -28,18 +28,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Clean up old files
+        run: |
+          echo "Cleaning up old archives..."
+          rm -f *.zip
+          rm -rf downloads
+          echo "Cleanup complete"
+
       - name: Install yt-dlp and zip
         run: |
           pip3 install yt-dlp
           sudo apt-get install -y zip
+
       - name: Setup cookies
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "✅ Cookies loaded from secret"
+            echo "Cookies loaded from secret"
           else
-            echo "⚠️ No YT_COOKIES secret found"
+            echo "No YT_COOKIES secret found"
           fi
+
       - name: Download
         run: |
           URL="${{ github.event.inputs.file_url_1 }}"
@@ -59,20 +69,16 @@ jobs:
             [ -z "$FILENAME" ] && FILENAME="file.dat"
             curl -L -o "downloads/$FILENAME" "$URL"
           fi
-      - name: Get filename
+
+      - name: Create zip
         run: |
           cd downloads
-          if [ "$(ls -A)" ]; then
-            FIRST_FILE=$(ls | head -1)
-            BASENAME="${FIRST_FILE%.*}"
-            echo "BASENAME=$BASENAME" >> $GITHUB_ENV
-          else
-            echo "No files downloaded!"
-            exit 1
-          fi
+          FIRST_FILE=$(ls | head -1)
+          BASENAME="${FIRST_FILE%.*}"
+          zip -r "../${BASENAME}.zip" .
+          echo "BASENAME=${BASENAME}" >> $GITHUB_ENV
           cd ..
-      - name: Create zip
-        run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
+
       - name: Push
         run: |
           git config user.name "github-actions[bot]"
@@ -80,3 +86,5 @@ jobs:
           git add "${BASENAME}.zip"
           git commit -m "Add ${BASENAME}.zip" || echo "No changes"
           git push origin main
+        env:
+          BASENAME: ${{ env.BASENAME }}
