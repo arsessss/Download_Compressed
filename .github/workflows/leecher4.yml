@@ -39,38 +39,42 @@ jobs:
       - name: Use cookies from secret
         run: |
           echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-      - name: Download and log
+      - name: Download
         run: |
           export PATH="$HOME/.deno/bin:$PATH"
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
-          exec 2>&1
-          echo "=== DOWNLOAD LOG ==="
-          echo "URL: $URL"
-          echo "Quality: $QUALITY"
-          echo "Time: $(date)"
-          if [[ "$URL" == *"youtube"* ]]; then
-            echo "YouTube mode with Deno"
-            yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${QUALITY}]" -o "downloads/%(title)s.%(ext)s" "$URL"
-          else
-            FILENAME=$(basename "$URL" | cut -d"?" -f1)
-            curl -L -o "downloads/$FILENAME" "$URL"
-          fi
-          echo "Exit code: $?"
-          echo "=== END LOG ==="
-      - name: Save logs
+          (
+            echo "=== DOWNLOAD LOG ==="
+            echo "URL: $URL"
+            echo "Quality: $QUALITY"
+            echo "Time: $(date)"
+            echo ""
+            if [[ "$URL" == *"youtube"* ]]; then
+              echo "YouTube mode with Deno"
+              yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${QUALITY}]" -o "downloads/%(title)s.%(ext)s" "$URL"
+            else
+              FILENAME=$(basename "$URL" | cut -d"?" -f1)
+              curl -L -o "downloads/$FILENAME" "$URL"
+            fi
+            echo ""
+            echo "Exit code: $?"
+            echo "=== END LOG ==="
+          ) | tee logs.txt
+      - name: Get filename
         run: |
           cd downloads
           FIRST_FILE=$(ls | head -1)
           BASENAME="${FIRST_FILE%.*}"
           echo "BASENAME=$BASENAME" >> $GITHUB_ENV
           cd ..
-          zip -r "${BASENAME}.zip" downloads/
-      - name: Push
+      - name: Create zip
+        run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
+      - name: Push logs and archive
         run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
-          git add "${BASENAME}.zip"
-          git commit -m "Add ${BASENAME}.zip" || true
+          git add logs.txt "${BASENAME}.zip"
+          git commit -m "Add ${BASENAME}.zip and logs" || true
           git push origin main
