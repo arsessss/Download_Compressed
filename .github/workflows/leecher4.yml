@@ -32,13 +32,19 @@ jobs:
       - name: Clean old files
         run: rm -f *.zip *.log
 
-      - name: Install yt-dlp
+      - name: Install Deno and yt-dlp
         run: |
-          pip3 install yt-dlp
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          pip3 install yt-dlp[default] yt-dlp-ejs
           sudo apt-get install -y zip
+
+      - name: Use cookies from secret
+        run: echo "${{ secrets.YT_COOKIES }}" > cookies.txt
 
       - name: Download and log
         run: |
+          export PATH="$HOME/.deno/bin:$PATH"
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           {
@@ -48,22 +54,38 @@ jobs:
             echo "Time: $(date)"
             echo ""
             if [[ "$URL" == *"youtube"* ]]; then
-              echo "YouTube mode"
-              yt-dlp -f "best[height<=${QUALITY}]" -o "video.mp4" "$URL" 2>&1
+              echo "YouTube mode with Deno + cookies"
+              yt-dlp --cookies cookies.txt \
+                --extractor-args "youtube:player_client=tv,android_sdkless" \
+                --js-runtime deno \
+                -f "best[height<=${QUALITY}]" \
+                -o "downloads/%(title)s.%(ext)s" \
+                "$URL" 2>&1
             else
               echo "Direct mode"
-              curl -L -o "file.dat" "$URL" 2>&1
+              curl -L -o "downloads/file.dat" "$URL" 2>&1
             fi
             echo ""
             echo "Exit code: $?"
             echo "=== END ==="
           } | tee download.log
 
-      - name: Save logs
+      - name: Get filename
+        run: |
+          cd downloads
+          FIRST_FILE=$(ls | head -1)
+          BASENAME="${FIRST_FILE%.*}"
+          echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          cd ..
+
+      - name: Create zip
+        run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
+
+      - name: Save logs and push
         run: |
           cp download.log logs.txt
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
-          git add logs.txt *.zip 2>/dev/null || true
-          git commit -m "Add logs" || true
+          git add logs.txt "${BASENAME}.zip" 2>/dev/null || true
+          git commit -m "Add ${BASENAME}.zip and logs" || true
           git push origin main
