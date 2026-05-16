@@ -28,14 +28,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install yt-dlp
-        run: pip3 install yt-dlp && sudo apt-get install -y zip
+      - name: Install Deno and yt-dlp
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          pip3 install yt-dlp
+          sudo apt-get install -y zip
+      - name: Use cookies
+        run: echo "${{ secrets.YT_COOKIES }}" > cookies.txt
       - name: Download
         run: |
+          export PATH="$HOME/.deno/bin:$PATH"
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           if [[ "$URL" == *"youtube"* ]]; then
-            yt-dlp --js-runtime deno -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "downloads/%(title)s.%(ext)s" "$URL"
+            yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "downloads/%(title)s.%(ext)s" "$URL"
           else
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
             curl -L -o "downloads/$FILENAME" "$URL"
