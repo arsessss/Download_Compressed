@@ -1,12 +1,24 @@
-name: Simple Download
+name: Leech360D
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'File URL'
+        description: URL
         required: true
         type: string
+      youtube_quality:
+        description: Quality
+        required: false
+        type: choice
+        default: '1080'
+        options:
+          - '2160'
+          - '1440'
+          - '1080'
+          - '720'
+          - '480'
+          - '360'
 
 permissions:
   contents: write
@@ -16,19 +28,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download file
+      - name: Download
         run: |
           URL="${{ github.event.inputs.file_url_1 }}"
           FILENAME=$(basename "$URL" | cut -d"?" -f1)
-          echo "Downloading from: $URL"
-          echo "Saving as: $FILENAME"
           curl -L -o "$FILENAME" "$URL"
-          echo "Download complete. File listing:"
-          ls -la
-      - name: Upload to repo
+      - name: Push
         run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
           git add .
-          git commit -m "Add downloaded file" || echo "No changes"
+          git commit -m "Add file" || true
           git push origin main
