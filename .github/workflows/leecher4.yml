@@ -28,10 +28,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Deno
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
       - name: Install yt-dlp
         run: pip3 install yt-dlp && sudo apt-get install -y zip
       - name: Download
         run: |
+          export PATH="$HOME/.deno/bin:$PATH"
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           if [[ "$URL" == *"youtube"* ]]; then
