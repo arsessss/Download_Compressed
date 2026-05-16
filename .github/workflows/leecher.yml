@@ -1,14 +1,14 @@
-name: Leech360D
+name: Leech360D Downloader
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: URL
+        description: 'Link 1 (required)'
         required: true
         type: string
       youtube_quality:
-        description: Quality
+        description: 'YouTube quality'
         required: false
         type: choice
         default: '1080'
@@ -29,16 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Delete old zip files
-        run: git rm -f --ignore-unmatch *.zip
+      - name: Clean old files
+        run: rm -f *.zip *.log
 
-      - name: Install Deno
+      - name: Install Deno and yt-dlp
         run: |
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
-
-      - name: Install yt-dlp and zip
-        run: |
           pip3 install yt-dlp
           sudo apt-get install -y zip
 
@@ -48,19 +45,17 @@ jobs:
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
           fi
 
-      - name: Download and create zip
-        continue-on-error: true
-        id: download_step
+      - name: Download and log
         run: |
+          URL="${{ github.event.inputs.file_url_1 }}"
+          QUALITY="${{ github.event.inputs.youtube_quality }}"
+          export PATH="$HOME/.deno/bin:$PATH"
           {
             echo "=== DOWNLOAD LOG ==="
-            echo "Time: $(date)"
-            URL="${{ github.event.inputs.file_url_1 }}"
-            QUALITY="${{ github.event.inputs.youtube_quality }}"
             echo "URL: $URL"
             echo "Quality: $QUALITY"
-            export PATH="$HOME/.deno/bin:$PATH"
-            
+            echo "Time: $(date)"
+            echo ""
             if [[ "$URL" == *"youtube"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
               echo "YouTube mode"
               yt-dlp --cookies cookies.txt \
@@ -68,30 +63,30 @@ jobs:
                 --js-runtime deno \
                 -f "best[height<=${QUALITY}]" \
                 -o "video.mp4" \
-                "$URL"
-              FILENAME="video.mp4"
+                "$URL" 2>&1
             else
-              echo "Direct download mode"
+              echo "Direct mode"
               FILENAME=$(basename "$URL" | cut -d"?" -f1)
-              [ -z "$FILENAME" ] && FILENAME="file.dat"
-              curl -L -o "$FILENAME" "$URL"
+              curl -L -o "$FILENAME" "$URL" 2>&1
             fi
-            
-            if [ -f "$FILENAME" ]; then
-              BASENAME="${FILENAME%.*}"
-              zip "${BASENAME}.zip" "$FILENAME"
-              echo "Created: ${BASENAME}.zip"
-            else
-              echo "ERROR: No file downloaded!"
-            fi
-            echo "=== END LOG ==="
-          } 2>&1 | tee logs.txt
+            echo ""
+            echo "Exit code: $?"
+            echo "=== END ==="
+          } | tee download.log
 
-      - name: Commit and push (always)
-        if: always()
+      - name: Create zip if video exists
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.zip logs.txt 2>/dev/null || true
-          git commit -m "Update zip and logs" || echo "No changes"
+          if [ -f video.mp4 ]; then
+            zip video.zip video.mp4
+          elif [ -f *.dat ]; then
+            zip file.zip *.dat
+          fi
+
+      - name: Save logs and files
+        run: |
+          cp download.log logs.txt
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add logs.txt *.zip 2>/dev/null || true
+          git commit -m "Add logs and files" || true
           git push origin main
