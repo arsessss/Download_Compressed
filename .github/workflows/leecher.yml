@@ -29,10 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Delete all existing zip files
+      - name: Delete old zip files from Git
         run: |
-          echo "Deleting all .zip files..."
-          rm -f *.zip
+          echo "Removing old zip files..."
+          git rm -f --ignore-unmatch *.zip
           echo "Done"
 
       - name: Install Deno
@@ -53,7 +53,6 @@ jobs:
 
       - name: Download
         run: |
-          mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           export PATH="$HOME/.deno/bin:$PATH"
@@ -63,26 +62,27 @@ jobs:
               --extractor-args "youtube:player_client=tv,android_sdkless" \
               --js-runtime deno \
               -f "best[height<=${QUALITY}]" \
-              -o "downloads/%(title)s.%(ext)s" \
+              -o "video.mp4" \
               "$URL"
+            FILENAME="video.mp4"
           else
             echo "Direct download mode"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
-            curl -L -o "downloads/$FILENAME" "$URL"
+            [ -z "$FILENAME" ] && FILENAME="file.dat"
+            curl -L -o "$FILENAME" "$URL"
           fi
+          echo "Downloaded: $FILENAME"
 
       - name: Create zip
         run: |
-          cd downloads
-          FIRST_FILE=$(ls | head -1)
-          BASENAME="${FIRST_FILE%.*}"
-          zip -r "../${BASENAME}.zip" .
-          cd ..
+          BASENAME="${FILENAME%.*}"
+          zip "${BASENAME}.zip" "$FILENAME"
+          echo "Created: ${BASENAME}.zip"
 
-      - name: Push
+      - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add *.zip
-          git commit -m "Add zip" || true
+          git commit -m "Add zip file" || echo "No changes"
           git push origin main
