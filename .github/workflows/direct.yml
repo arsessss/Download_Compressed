@@ -1,0 +1,30 @@
+name: Direct Download Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url_1:
+        description: URL
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download
+        run: |
+          FILENAME=$(basename "${{ github.event.inputs.file_url_1 }}" | cut -d"?" -f1)
+          curl -L -o "$FILENAME" "${{ github.event.inputs.file_url_1 }}"
+          ls -la
+      - name: Push
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add .
+          git commit -m "Add file" || true
+          git push origin main
