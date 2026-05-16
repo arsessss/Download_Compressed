@@ -49,11 +49,11 @@ on:
         description: 'Maximum size per chunk (MB)'
         required: false
         type: choice
-        default: '95  (maximum - for large files)'
+        default: '95'
         options:
-          - '25  (slow internet - small files)'
-          - '50  (medium)'
-          - '95  (maximum - for large files)'
+          - '25'
+          - '50'
+          - '95'
 
 permissions:
   contents: write
@@ -65,90 +65,88 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 1
 
-      - name: Install yt-dlp and dependencies
+      - name: Install Deno (JavaScript runtime for yt-dlp)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+
+      - name: Install yt-dlp and ffmpeg
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full ffmpeg
-          pip3 install yt-dlp
+          sudo apt-get install -y ffmpeg p7zip-full
+          pip3 install yt-dlp --break-system-packages
 
       - name: Create cookies file
         run: |
-          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-
-      - name: Parse inputs
-        id: parse
-        run: |
-          SIZE=$(echo "${{ github.event.inputs.split_size }}" | grep -oP '\d+')
-          echo "split_mb=${SIZE:-95}" >> $GITHUB_OUTPUT
-          mkdir -p downloads
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+            echo "✅ Cookies file created"
+          else
+            echo "⚠️ No cookies secret found. YouTube downloads may fail."
+          fi
 
       - name: Download YouTube video
-        id: download
+        if: ${{ contains(github.event.inputs.file_url_1, 'youtube.com') || contains(github.event.inputs.file_url_1, 'youtu.be') }}
         run: |
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           
-          echo "Downloading: $URL"
-          yt-dlp --cookies cookies.txt \
-            -f "bestvideo[height<=${QUALITY}]+bestaudio/best[height<=${QUALITY}]" \
-            --merge-output-format mp4 \
-            -o "video.mp4" \
-            "$URL"
+          mkdir -p downloads
           
-          if [ -f "video.mp4" ]; then
-            echo "Download successful"
-            ls -lh video.mp4
+          echo "Downloading: $URL"
+          echo "Quality: $QUALITY"
+          
+          if [ -f "cookies.txt" ]; then
+            yt-dlp --cookies cookies.txt --js-runtime deno --extractor-args "youtube:player_client=android" -f "bestvideo[height<=$QUALITY]+bestaudio/best" --merge-output-format mp4 -o "downloads/video.mp4" "$URL" || yt-dlp --cookies cookies.txt --js-runtime deno --extractor-args "youtube:player_client=web" -f "best[height<=$QUALITY]" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
           else
-            echo "Download failed"
+            yt-dlp --js-runtime deno --extractor-args "youtube:player_client=android" -f "bestvideo[height<=$QUALITY]+bestaudio/best" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
+          fi
+          
+          if [ -f "downloads/video.mp4" ]; then
+            echo "✅ Download successful!"
+            ls -la downloads/
+          else
+            echo "❌ Download failed"
             exit 1
           fi
 
+      - name: Download direct file
+        if: ${{ !contains(github.event.inputs.file_url_1, 'youtube.com') && !contains(github.event.inputs.file_url_1, 'youtu.be') }}
+        run: |
+          URL="${{ github.event.inputs.file_url_1 }}"
+          mkdir -p downloads
+          curl -L --fail --retry 5 -o "downloads/file.bin" "$URL"
+          echo "✅ Download successful!"
+          ls -la downloads/
+
       - name: Create 7z archive
         run: |
-          SPLIT_MB=${{ steps.parse.outputs.split_mb }}
+          SPLIT_MB=${{ github.event.inputs.split_size }}
           PASSWORD="${{ github.event.inputs.zip_password }}"
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          
-          mkdir -p "downloads/${TIMESTAMP}"
+          mkdir -p "output/${TIMESTAMP}"
           
           if [ -n "$PASSWORD" ]; then
-            7z a -p"$PASSWORD" -mhe=on -mx=3 -v${SPLIT_MB}m "downloads/${TIMESTAMP}/video.7z" "video.mp4"
+            7z a -p"$PASSWORD" -mhe=on -mx=3 -v${SPLIT_MB}m "output/${TIMESTAMP}/archive.7z" downloads/*
           else
-            7z a -mx=3 -v${SPLIT_MB}m "downloads/${TIMESTAMP}/video.7z" "video.mp4"
+            7z a -mx=3 -v${SPLIT_MB}m "output/${TIMESTAMP}/archive.7z" downloads/*
           fi
           
-          echo "folder=downloads/${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "folder=output/${TIMESTAMP}" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: downloaded-video
-          path: downloads/
+          name: downloaded-file
+          path: output/
           retention-days: 7
-
-      - name: Cleanup old artifacts from repo
-        run: |
-          # Remove old downloads folder from git
-          git rm -rf downloads/ 2>/dev/null || true
-          rm -rf downloads/ 2>/dev/null || true
-          
-          # Commit and push cleanup if there were changes
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --staged --quiet || git commit -m "Cleanup old downloads"
-          git push origin main 2>/dev/null || true
 
       - name: Summary
         run: |
-          echo "## 📊 Download Complete" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Download Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Video downloaded successfully!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📁 Download the artifact from the **Artifacts** section below." >> $GITHUB_STEP_SUMMARY
+          echo "📁 File saved in artifact: **downloaded-file**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "Dedicated to all those who have no way but to pass... - [Hossein Balanj](https://balanj.ir)" >> $GITHUB_STEP_SUMMARY
+          echo "Dedicated to all those who have no way but to pass..." >> $GITHUB_STEP_SUMMARY
