@@ -48,7 +48,7 @@ jobs:
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
           fi
 
-      - name: Download and create zip (with logging)
+      - name: Download and create zip
         run: |
           exec > >(tee -a logs.txt) 2>&1
           echo "=== DOWNLOAD LOG ==="
@@ -66,23 +66,21 @@ jobs:
               --js-runtime deno \
               -f "best[height<=${QUALITY}]" \
               -o "video.mp4" \
-              "$URL"
+              "$URL" 2>&1
             FILENAME="video.mp4"
           else
             echo "Direct download mode"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
             [ -z "$FILENAME" ] && FILENAME="file.dat"
-            curl -L -o "$FILENAME" "$URL"
+            curl -L -o "$FILENAME" "$URL" 2>&1
           fi
           
           if [ -f "$FILENAME" ]; then
             BASENAME="${FILENAME%.*}"
-            zip "${BASENAME}.zip" "$FILENAME"
+            zip "${BASENAME}.zip" "$FILENAME" 2>&1
             echo "Created: ${BASENAME}.zip"
-            echo "ZIP_NAME=${BASENAME}.zip" >> $GITHUB_ENV
           else
             echo "ERROR: No file downloaded!"
-            exit 1
           fi
           echo "=== END LOG ==="
 
