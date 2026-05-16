@@ -20,45 +20,59 @@ on:
           - '720'
           - '480'
           - '360'
+      zip_password:
+        description: '🔒 Password for archive (optional)'
+        required: false
+        type: string
+        default: ''
+      delete_old:
+        description: 'Delete previous archives'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
-  download:
+  download-and-zip:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
       - name: Clean old files
+        if: github.event.inputs.delete_old == 'true'
         run: |
           echo "Cleaning old files..."
-          rm -f *.zip
-          rm -rf downloads
-          git rm -f --ignore-unmatch *.zip 2>/dev/null || true
-
+          rm -f *.zip *.7z* 2>/dev/null || true
+          rm -rf downloads 2>/dev/null || true
+          
       - name: Install Deno and yt-dlp
         run: |
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
           pip3 install yt-dlp
+          sudo apt-get update -qq
           sudo apt-get install -y zip
-
+          
       - name: Setup cookies
+        if: github.event.inputs.file_url_1 != ''
         run: |
           echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-
+          
       - name: Download and create zip
         run: |
           export PATH="$HOME/.deno/bin:$PATH"
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
+          PASSWORD="${{ github.event.inputs.zip_password }}"
           
-          echo "URL: $URL"
-          echo "Quality: $QUALITY"
+          echo "Processing: $URL"
           
-          if [[ "$URL" == *"youtube"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube mode"
+          if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
+            echo "YouTube mode - Quality: ${QUALITY}p"
             yt-dlp --cookies cookies.txt \
               --extractor-args "youtube:player_client=tv,android_sdkless" \
               --js-runtime deno \
@@ -67,25 +81,44 @@ jobs:
               "$URL"
             FILENAME="video.mp4"
           else
-            echo "Direct mode"
+            echo "Direct download mode"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
-            [ -z "$FILENAME" ] && FILENAME="file.dat"
-            curl -L -o "$FILENAME" "$URL"
+            [ -z "$FILENAME" ] && FILENAME="downloaded_file"
+            curl -L --fail --retry 3 -o "$FILENAME" "$URL"
           fi
           
-          if [ -f "$FILENAME" ]; then
-            BASENAME="${FILENAME%.*}"
-            zip "${BASENAME}.zip" "$FILENAME"
-            echo "Created: ${BASENAME}.zip"
-          else
-            echo "ERROR: No file downloaded"
+          if [ ! -f "$FILENAME" ]; then
+            echo "ERROR: Download failed"
             exit 1
           fi
-
-      - name: Push
+          
+          BASENAME="${FILENAME%.*}"
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          ZIP_NAME="${BASENAME}_${TIMESTAMP}.zip"
+          
+          if [ -n "$PASSWORD" ]; then
+            zip -P "$PASSWORD" "$ZIP_NAME" "$FILENAME"
+          else
+            zip "$ZIP_NAME" "$FILENAME"
+          fi
+          
+          echo "Created: $ZIP_NAME"
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          
+      - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.zip
-          git commit -m "Add zip file" || echo "No changes"
-          git push origin main
+          git add *.zip 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "No new files to commit"
+          else
+            git commit -m "Add zip file [skip ci]"
+            git push origin ${{ github.ref_name }}
+          fi
+          
+      - name: Summary
+        run: |
+          echo "## ✅ Download Complete" >> $GITHUB_STEP_SUMMARY
+          echo "File: ${{ env.ZIP_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "Size: $(du -h ${{ env.ZIP_NAME }} 2>/dev/null | cut -f1)" >> $GITHUB_STEP_SUMMARY
