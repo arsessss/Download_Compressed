@@ -28,15 +28,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install zip
+        run: sudo apt-get install -y zip
       - name: Download
         run: |
           URL="${{ github.event.inputs.file_url_1 }}"
           FILENAME=$(basename "$URL" | cut -d"?" -f1)
           curl -L -o "$FILENAME" "$URL"
+      - name: Create zip
+        run: |
+          FILENAME=$(basename "${{ github.event.inputs.file_url_1 }}" | cut -d"?" -f1)
+          BASENAME="${FILENAME%.*}"
+          zip "${BASENAME}.zip" "$FILENAME"
       - name: Push
         run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
-          git add .
-          git commit -m "Add file" || true
+          git add *.zip
+          git commit -m "Add zip archive" || true
           git push origin main
