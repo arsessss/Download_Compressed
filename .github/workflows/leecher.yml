@@ -67,28 +67,16 @@ jobs:
       - name: Clean old archives (ALWAYS)
         run: |
           echo "Cleaning old archives..."
-          find . -maxdepth 1 -type f \( -name "*.7z.*" -o -name "*.7z" -o -name "*.zip" \) -exec rm -v {} \;
+          find . -maxdepth 1 -type f \( -name "*.zip" \) -exec rm -v {} \;
           find . -maxdepth 1 -type d -name "downloads" -exec rm -rf {} \;
-          git rm --cached *.7z.* 2>/dev/null || true
-          git rm --cached *.7z 2>/dev/null || true
           git rm --cached *.zip 2>/dev/null || true
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install Deno and yt-dlp with EJS support
+      - name: Install dependencies (curl, jq, 7z)
         run: |
-          curl -fsSL https://deno.land/install.sh | sh
-          echo "$HOME/.deno/bin" >> $GITHUB_PATH
-          pip3 install "yt-dlp[default]" yt-dlp-ejs --break-system-packages || pip3 install "yt-dlp[default]" yt-dlp-ejs
-          curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz | tar -xJ
-          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
-          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
-          rm -rf ffmpeg-master-latest-linux64-gpl
-          sudo apt-get update -qq && sudo apt-get install -y p7zip-full
-
-      - name: Create cookies file from secret
-        run: |
-          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full jq curl
 
       - name: Parse inputs
         id: parse
@@ -107,7 +95,7 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Download files (YouTube with Deno + cookies, direct via curl)
+      - name: Download files (YouTube via Cobalt API, direct via curl)
         id: download_files
         run: |
           mkdir -p files
@@ -121,78 +109,54 @@ jobs:
             echo "[$counter/$total] Processing: $url"
 
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "Detected YouTube link. Requested quality: ${YT_QUALITY}p"
-              echo "Downloading with yt-dlp + Deno + cookies..."
+              echo "Detected YouTube link. Using Cobalt API..."
+              echo "Requested quality: ${YT_QUALITY}p"
 
-              yt-dlp --cookies cookies.txt \
-                     --extractor-args "youtube:player_client=tv,android_sdkless" \
-                     --js-runtime deno \
-                     -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
-                     --merge-output-format mp4 \
-                     -o "files/yt_video_${counter}.%(ext)s" \
-                     "$url" || \
-              yt-dlp --cookies cookies.txt \
-                     --extractor-args "youtube:player_client=web" \
-                     --js-runtime deno \
-                     -f "best[height<=${YT_QUALITY}]" \
-                     -o "files/yt_video_${counter}.%(ext)s" \
-                     "$url"
+              # Map quality to Cobalt format
+              case "${YT_QUALITY}" in
+                "2160") COBALT_QUALITY="2160" ;;
+                "1440") COBALT_QUALITY="1440" ;;
+                "1080") COBALT_QUALITY="1080" ;;
+                "720")  COBALT_QUALITY="720" ;;
+                "480")  COBALT_QUALITY="480" ;;
+                "360")  COBALT_QUALITY="360" ;;
+                *)      COBALT_QUALITY="1080" ;;
+              esac
 
-              DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
-              if [ -f "$DOWNLOADED_FILE" ]; then
-                TITLE=$(yt-dlp --cookies cookies.txt --js-runtime deno --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
-                if [ -z "$TITLE" ]; then
-                  TITLE="youtube_video_${counter}"
+              # Call Cobalt API (version 8 - still working as of 2026)
+              API_RESPONSE=$(curl -s -X POST https://api.cobalt.tools/api/json \
+                -H "Accept: application/json" \
+                -H "Content-Type: application/json" \
+                -d "{\"url\": \"$url\", \"vQuality\": \"$COBALT_QUALITY\", \"vCodec\": \"h264\", \"aFormat\": \"mp3\"}")
+
+              DOWNLOAD_URL=$(echo "$API_RESPONSE" | jq -r '.url')
+              FILENAME=$(echo "$API_RESPONSE" | jq -r '.filename')
+
+              if [ "$DOWNLOAD_URL" != "null" ] && [ -n "$DOWNLOAD_URL" ]; then
+                echo "Got download URL, downloading..."
+                curl -L -o "files/${FILENAME}" "$DOWNLOAD_URL"
+                if [ -f "files/${FILENAME}" ]; then
+                  size=$(ls -lh "files/${FILENAME}" | awk '{print $5}')
+                  echo "Downloaded: ${FILENAME} ($size)"
+                  success=$((success + 1))
+                else
+                  echo "Failed to download from Cobalt URL"
                 fi
-                mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
-                RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "files/${TITLE}.mp4" 2>/dev/null | tr -d '\n')
-                if [ -n "$RES" ]; then
-                  echo "Actual resolution: ${RES}p"
-                  if [ "$RES" -lt "${YT_QUALITY}" ]; then
-                    echo "⚠️ Note: Requested ${YT_QUALITY}p but got ${RES}p (source may not have ${YT_QUALITY}p)"
-                  fi
-                fi
-                size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
-                echo "Downloaded: ${TITLE}.mp4 ($size)"
-                success=$((success + 1))
               else
-                echo "Failed to download YouTube video"
+                echo "Cobalt API failed. Response: $API_RESPONSE"
+                echo "Trying fallback with yt-dlp (might fail)..."
+                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "files/video_${counter}.mp4" "$url" || true
               fi
             else
               echo "Normal direct download"
-              FILENAME_FROM_URL=$(echo "$url" | sed 's/?.*//' | xargs basename)
-              if [ -z "$FILENAME_FROM_URL" ]; then
-                FILENAME_FROM_URL="unknown_${counter}"
+              FILENAME=$(echo "$url" | sed 's/?.*//' | xargs basename)
+              if [ -z "$FILENAME" ]; then
+                FILENAME="file_${counter}"
               fi
-              FILENAME_BASE="${FILENAME_FROM_URL%.*}"
-              FILENAME_EXT="${FILENAME_FROM_URL##*.}"
-              if [ "$FILENAME_BASE" = "$FILENAME_FROM_URL" ]; then
-                FILENAME_EXT=""
-              fi
-              PREFIX=""
-              if [ "$total" -gt 1 ]; then
-                NUM=$(printf '%02d' $counter)
-                DL_NAME="${PREFIX}${NUM}_${FILENAME_BASE}"
-              else
-                DL_NAME="${PREFIX}${FILENAME_BASE}"
-              fi
-              DL_NAME=$(echo "$DL_NAME" | sed 's/^_//')
-              MAXLEN=50
-              if [ ${#DL_NAME} -gt $MAXLEN ]; then
-                DL_NAME="${DL_NAME:0:$MAXLEN}"
-              fi
-              if [ -n "$FILENAME_EXT" ]; then
-                FINAL_FILENAME="${DL_NAME}.${FILENAME_EXT}"
-              else
-                FINAL_FILENAME="${DL_NAME}"
-              fi
-              if [ -z "$FINAL_FILENAME" ]; then
-                FINAL_FILENAME="file_${counter}"
-              fi
-              echo "Download filename: ${FINAL_FILENAME}"
-              if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FINAL_FILENAME}" "$url"; then
-                size=$(ls -lh "files/${FINAL_FILENAME}" | awk '{print $5}')
-                echo "Downloaded: ${FINAL_FILENAME} ($size)"
+              echo "Download filename: ${FILENAME}"
+              if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FILENAME}" "$url"; then
+                size=$(ls -lh "files/${FILENAME}" | awk '{print $5}')
+                echo "Downloaded: ${FILENAME} ($size)"
                 success=$((success + 1))
               else
                 echo "Failed: $url"
@@ -220,7 +184,6 @@ jobs:
             counter=$((counter + 1))
             echo "Processing: $(basename "$file")"
             FILENAME=$(basename "$file")
-            # Remove original extension, add .zip
             BASENAME="${FILENAME%.*}"
             if [ "${#PASSWORD}" -gt 0 ]; then
               7z a -p"$PASSWORD" "${FOLDER}/${BASENAME}.zip" "$file"
