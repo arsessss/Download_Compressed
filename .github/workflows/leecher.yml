@@ -28,22 +28,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install zip
-        run: sudo apt-get install -y zip
+      - name: Install yt-dlp and zip
+        run: |
+          pip3 install yt-dlp
+          sudo apt-get install -y zip
+      - name: Setup cookies
+        run: |
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+            echo "✅ Cookies loaded from secret"
+          else
+            echo "⚠️ No YT_COOKIES secret found"
+          fi
       - name: Download
         run: |
           URL="${{ github.event.inputs.file_url_1 }}"
-          FILENAME=$(basename "$URL" | cut -d"?" -f1)
-          curl -L -o "$FILENAME" "$URL"
-      - name: Create zip
+          QUALITY="${{ github.event.inputs.youtube_quality }}"
+          mkdir -p downloads
+          if [[ "$URL" == *"youtube"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
+            echo "YouTube mode with cookies"
+            yt-dlp --cookies cookies.txt \
+              --extractor-args "youtube:player_client=tv,android_sdkless" \
+              --js-runtime deno \
+              -f "best[height<=${QUALITY}]" \
+              -o "downloads/%(title)s.%(ext)s" \
+              "$URL"
+          else
+            echo "Direct download mode"
+            FILENAME=$(basename "$URL" | cut -d"?" -f1)
+            [ -z "$FILENAME" ] && FILENAME="file.dat"
+            curl -L -o "downloads/$FILENAME" "$URL"
+          fi
+      - name: Get filename
         run: |
-          FILENAME=$(basename "${{ github.event.inputs.file_url_1 }}" | cut -d"?" -f1)
-          BASENAME="${FILENAME%.*}"
-          zip "${BASENAME}.zip" "$FILENAME"
+          cd downloads
+          if [ "$(ls -A)" ]; then
+            FIRST_FILE=$(ls | head -1)
+            BASENAME="${FIRST_FILE%.*}"
+            echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          else
+            echo "No files downloaded!"
+            exit 1
+          fi
+          cd ..
+      - name: Create zip
+        run: cd downloads && zip -r "../${BASENAME}.zip" . && cd ..
       - name: Push
         run: |
-          git config user.name "bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add *.zip
-          git commit -m "Add zip archive" || true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${BASENAME}.zip"
+          git commit -m "Add ${BASENAME}.zip" || echo "No changes"
           git push origin main
