@@ -31,10 +31,8 @@ jobs:
 
       - name: Clean up old files
         run: |
-          echo "Cleaning up old archives..."
           rm -f *.zip
           rm -rf downloads
-          echo "Cleanup complete"
 
       - name: Install yt-dlp and zip
         run: |
@@ -45,9 +43,6 @@ jobs:
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "Cookies loaded from secret"
-          else
-            echo "No YT_COOKIES secret found"
           fi
 
       - name: Download
@@ -56,35 +51,28 @@ jobs:
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           mkdir -p downloads
           if [[ "$URL" == *"youtube"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            echo "YouTube mode with cookies"
             yt-dlp --cookies cookies.txt \
               --extractor-args "youtube:player_client=tv,android_sdkless" \
               --js-runtime deno \
               -f "best[height<=${QUALITY}]" \
-              -o "downloads/%(title)s.%(ext)s" \
+              -o "downloads/video.mp4" \
               "$URL"
           else
-            echo "Direct download mode"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
             [ -z "$FILENAME" ] && FILENAME="file.dat"
             curl -L -o "downloads/$FILENAME" "$URL"
           fi
 
-      - name: Create zip
+      - name: Create and push zip
         run: |
           cd downloads
           FIRST_FILE=$(ls | head -1)
           BASENAME="${FIRST_FILE%.*}"
-          zip -r "../${BASENAME}.zip" .
-          echo "BASENAME=${BASENAME}" >> $GITHUB_ENV
+          ZIP_NAME="${BASENAME}.zip"
+          zip -r "../$ZIP_NAME" .
           cd ..
-
-      - name: Push
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${BASENAME}.zip"
-          git commit -m "Add ${BASENAME}.zip" || echo "No changes"
+          git add "$ZIP_NAME"
+          git commit -m "Add $ZIP_NAME" || true
           git push origin main
-        env:
-          BASENAME: ${{ env.BASENAME }}
