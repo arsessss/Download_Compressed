@@ -29,11 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Delete old zip files from Git
-        run: |
-          echo "Removing old zip files..."
-          git rm -f --ignore-unmatch *.zip
-          echo "Done"
+      - name: Delete old zip files
+        run: git rm -f --ignore-unmatch *.zip
 
       - name: Install Deno
         run: |
@@ -51,11 +48,12 @@ jobs:
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
           fi
 
-      - name: Download
+      - name: Download and create zip
         run: |
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           export PATH="$HOME/.deno/bin:$PATH"
+          
           if [[ "$URL" == *"youtube"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
             echo "YouTube mode"
             yt-dlp --cookies cookies.txt \
@@ -71,13 +69,11 @@ jobs:
             [ -z "$FILENAME" ] && FILENAME="file.dat"
             curl -L -o "$FILENAME" "$URL"
           fi
-          echo "Downloaded: $FILENAME"
-
-      - name: Create zip
-        run: |
+          
           BASENAME="${FILENAME%.*}"
           zip "${BASENAME}.zip" "$FILENAME"
           echo "Created: ${BASENAME}.zip"
+          echo "ZIP_NAME=${BASENAME}.zip" >> $GITHUB_ENV
 
       - name: Commit and push
         run: |
