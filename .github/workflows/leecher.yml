@@ -1,152 +1,41 @@
-name: Transfer file to GitHub (supports YouTube links)
+name: Transfer file to GitHub
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: 'Link 1 (required) - can be YouTube or direct link'
+        description: 'Link (YouTube or direct)'
         required: true
         type: string
-        default: ''
-      file_url_2:
-        description: 'Link 2 (optional)'
-        required: false
-        type: string
-        default: ''
-      file_url_3:
-        description: 'Link 3 (optional)'
-        required: false
-        type: string
-        default: ''
-      file_url_4:
-        description: 'Link 4 (optional)'
-        required: false
-        type: string
-        default: ''
-      file_url_5:
-        description: 'Link 5 (optional)'
-        required: false
-        type: string
-        default: ''
       youtube_quality:
-        description: 'Quality for YouTube links'
-        required: false
-        type: choice
+        description: 'Quality for YouTube'
         default: '1080'
+        type: choice
         options:
-          - '2160'
-          - '1440'
           - '1080'
           - '720'
           - '480'
-          - '360'
-      zip_password:
-        description: '🔒 Set password for archive file'
-        required: false
-        type: string
-        default: ''
-      split_size:
-        description: 'Maximum size per chunk (MB)'
-        required: false
-        type: choice
-        default: '95'
-        options:
-          - '25'
-          - '50'
-          - '95'
-
-permissions:
-  contents: write
 
 jobs:
-  leech-split-file:
+  download:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Install Deno (JavaScript runtime for yt-dlp)
+      - name: Install yt-dlp
         run: |
-          curl -fsSL https://deno.land/install.sh | sh
-          echo "$HOME/.deno/bin" >> $GITHUB_PATH
-
-      - name: Install yt-dlp and ffmpeg
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg p7zip-full
-          pip3 install yt-dlp --break-system-packages
-
-      - name: Create cookies file
-        run: |
-          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
-            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-            echo "✅ Cookies file created"
-          else
-            echo "⚠️ No cookies secret found. YouTube downloads may fail."
-          fi
-
-      - name: Download YouTube video
-        if: ${{ contains(github.event.inputs.file_url_1, 'youtube.com') || contains(github.event.inputs.file_url_1, 'youtu.be') }}
-        run: |
-          URL="${{ github.event.inputs.file_url_1 }}"
-          QUALITY="${{ github.event.inputs.youtube_quality }}"
-          
-          mkdir -p downloads
-          
-          echo "Downloading: $URL"
-          echo "Quality: $QUALITY"
-          
-          if [ -f "cookies.txt" ]; then
-            yt-dlp --cookies cookies.txt --js-runtime deno --extractor-args "youtube:player_client=android" -f "bestvideo[height<=$QUALITY]+bestaudio/best" --merge-output-format mp4 -o "downloads/video.mp4" "$URL" || yt-dlp --cookies cookies.txt --js-runtime deno --extractor-args "youtube:player_client=web" -f "best[height<=$QUALITY]" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
-          else
-            yt-dlp --js-runtime deno --extractor-args "youtube:player_client=android" -f "bestvideo[height<=$QUALITY]+bestaudio/best" --merge-output-format mp4 -o "downloads/video.mp4" "$URL"
-          fi
-          
-          if [ -f "downloads/video.mp4" ]; then
-            echo "✅ Download successful!"
-            ls -la downloads/
-          else
-            echo "❌ Download failed"
-            exit 1
-          fi
-
-      - name: Download direct file
-        if: ${{ !contains(github.event.inputs.file_url_1, 'youtube.com') && !contains(github.event.inputs.file_url_1, 'youtu.be') }}
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install yt-dlp
+      - name: Download
         run: |
           URL="${{ github.event.inputs.file_url_1 }}"
           mkdir -p downloads
-          curl -L --fail --retry 5 -o "downloads/file.bin" "$URL"
-          echo "✅ Download successful!"
-          ls -la downloads/
-
-      - name: Create 7z archive
-        run: |
-          SPLIT_MB=${{ github.event.inputs.split_size }}
-          PASSWORD="${{ github.event.inputs.zip_password }}"
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          mkdir -p "output/${TIMESTAMP}"
-          
-          if [ -n "$PASSWORD" ]; then
-            7z a -p"$PASSWORD" -mhe=on -mx=3 -v${SPLIT_MB}m "output/${TIMESTAMP}/archive.7z" downloads/*
+          if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
+            yt-dlp -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "downloads/video.mp4" "$URL"
           else
-            7z a -mx=3 -v${SPLIT_MB}m "output/${TIMESTAMP}/archive.7z" downloads/*
+            curl -L -o "downloads/file" "$URL"
           fi
-          
-          echo "folder=output/${TIMESTAMP}" >> $GITHUB_OUTPUT
-
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: downloaded-file
-          path: output/
-          retention-days: 7
-
-      - name: Summary
-        run: |
-          echo "## ✅ Download Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📁 File saved in artifact: **downloaded-file**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "Dedicated to all those who have no way but to pass..." >> $GITHUB_STEP_SUMMARY
+          name: downloaded
+          path: downloads/
