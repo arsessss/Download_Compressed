@@ -1,0 +1,36 @@
+name: Print YT_COOKIES Secret
+
+on:
+  workflow_dispatch:
+
+jobs:
+  print:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secret length
+        run: |
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "✅ YT_COOKIES secret exists"
+            echo "Length: ${{ secrets.YT_COOKIES }} | wc -c"
+            echo ""
+            echo "First 200 characters:"
+            echo "${{ secrets.YT_COOKIES }}" | cut -c1-200
+            echo ""
+            echo "Does it start with Netscape format?"
+            if echo "${{ secrets.YT_COOKIES }}" | head -1 | grep -q "Netscape"; then
+              echo "✅ Yes - Netscape format detected"
+            else
+              echo "❌ No - Not in Netscape format"
+            fi
+          else
+            echo "❌ YT_COOKIES secret does NOT exist"
+          fi
+      - name: Save to file (for debugging)
+        run: |
+          echo "${{ secrets.YT_COOKIES }}" > cookies_debug.txt
+          echo "Cookies saved to cookies_debug.txt"
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cookies-debug
+          path: cookies_debug.txt
