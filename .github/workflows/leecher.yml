@@ -58,11 +58,6 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: sci-hub-queue
-  cancel-in-progress: false
-  queue: max
-
 jobs:
   leech-split-file:
     runs-on: ubuntu-latest
@@ -73,25 +68,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Clean old archives (always)
+      - name: Clean OLD archives only (keep current downloads folder)
         run: |
-          echo "Cleaning old archives and downloads folder..."
-          
-          # Remove all .7z files from git tracking
-          git rm -rf --ignore-unmatch *.7z *.7z.* downloads/ 2>/dev/null || true
-          
-          # Delete actual files from filesystem
-          rm -rf downloads/ *.7z *.7z.* 2>/dev/null || true
-          
-          # Commit the removal
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "Clean old archives before new download" 2>/dev/null || echo "No files to clean"
-          
-          # Push the cleanup commit
-          git push origin main 2>/dev/null || echo "Nothing to push"
-          
-          echo "Cleanup complete."
+          echo "Cleaning OLD archives from root directory (not downloads/)..."
+          # Only remove old .7z files in root, NOT in downloads folder
+          rm -f *.7z *.7z.* 2>/dev/null || true
+          git rm --cached --ignore-unmatch *.7z *.7z.* 2>/dev/null || true
+          echo "Cleanup complete. Current downloads folder preserved."
 
       - name: Install Deno and yt-dlp with EJS support
         run: |
@@ -255,25 +238,37 @@ jobs:
       - name: Commit and Push all chunks
         run: |
           FOLDER="${{ steps.process_files.outputs.folder }}"
-          git add "${FOLDER}/"*.7z* 2>/dev/null || true
-          if ! git diff --staged --quiet; then
-            file_count=$(git diff --staged --name-only | wc -l)
-            git commit -m "Add files in ${FOLDER} (${file_count} chunks)"
-            push_success=false
-            max_attempts=15
-            for attempt in $(seq 1 $max_attempts); do
-              git pull --rebase origin main 2>/dev/null || true
-              if git push origin main; then
-                push_success=true
-                break
-              else
-                sleep 20
-              fi
-            done
-            if [ "$push_success" = false ]; then
-              exit 1
-            fi
+          echo "Adding files from ${FOLDER}..."
+          git add "${FOLDER}/"*
+          
+          if git diff --staged --quiet; then
+            echo "No files to commit."
+            exit 1
           fi
+          
+          file_count=$(git diff --staged --name-only | wc -l)
+          git commit -m "Add files in ${FOLDER} (${file_count} chunks)"
+          
+          push_success=false
+          max_attempts=15
+          for attempt in $(seq 1 $max_attempts); do
+            echo "Push attempt $attempt..."
+            git pull --rebase origin main 2>/dev/null || true
+            if git push origin main; then
+              push_success=true
+              break
+            else
+              echo "Push failed, retrying in 20 seconds..."
+              sleep 20
+            fi
+          done
+          
+          if [ "$push_success" = false ]; then
+            echo "Failed to push after $max_attempts attempts."
+            exit 1
+          fi
+          
+          echo "Successfully pushed ${file_count} files."
 
       - name: Summary
         run: |
