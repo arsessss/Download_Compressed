@@ -67,10 +67,11 @@ jobs:
       - name: Clean old archives (ALWAYS)
         run: |
           echo "Cleaning old archives..."
-          find . -maxdepth 1 -type f \( -name "*.7z.*" -o -name "*.7z" \) -exec rm -v {} \;
+          find . -maxdepth 1 -type f \( -name "*.7z.*" -o -name "*.7z" -o -name "*.zip" \) -exec rm -v {} \;
           find . -maxdepth 1 -type d -name "downloads" -exec rm -rf {} \;
           git rm --cached *.7z.* 2>/dev/null || true
           git rm --cached *.7z 2>/dev/null || true
+          git rm --cached *.zip 2>/dev/null || true
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
@@ -168,13 +169,14 @@ jobs:
               if [ "$FILENAME_BASE" = "$FILENAME_FROM_URL" ]; then
                 FILENAME_EXT=""
               fi
-              PREFIX="sci-hub.ir"
+              PREFIX=""
               if [ "$total" -gt 1 ]; then
                 NUM=$(printf '%02d' $counter)
-                DL_NAME="${PREFIX}_${NUM}_${FILENAME_BASE}"
+                DL_NAME="${PREFIX}${NUM}_${FILENAME_BASE}"
               else
-                DL_NAME="${PREFIX}_${FILENAME_BASE}"
+                DL_NAME="${PREFIX}${FILENAME_BASE}"
               fi
+              DL_NAME=$(echo "$DL_NAME" | sed 's/^_//')
               MAXLEN=50
               if [ ${#DL_NAME} -gt $MAXLEN ]; then
                 DL_NAME="${DL_NAME:0:$MAXLEN}"
@@ -183,6 +185,9 @@ jobs:
                 FINAL_FILENAME="${DL_NAME}.${FILENAME_EXT}"
               else
                 FINAL_FILENAME="${DL_NAME}"
+              fi
+              if [ -z "$FINAL_FILENAME" ]; then
+                FINAL_FILENAME="file_${counter}"
               fi
               echo "Download filename: ${FINAL_FILENAME}"
               if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FINAL_FILENAME}" "$url"; then
@@ -198,7 +203,7 @@ jobs:
 
           echo "success_count=${success}" >> $GITHUB_OUTPUT
 
-      - name: Archive files (single 7z file, no split)
+      - name: Archive files (ZIP format, single file)
         id: process_files
         run: |
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -207,7 +212,7 @@ jobs:
           PASSWORD="${{ github.event.inputs.zip_password }}"
 
           echo "Output folder: ${FOLDER}"
-          echo "Archive mode: Single file (no split)"
+          echo "Archive mode: ZIP (single file)"
 
           counter=0
           for file in files/*; do
@@ -215,10 +220,12 @@ jobs:
             counter=$((counter + 1))
             echo "Processing: $(basename "$file")"
             FILENAME=$(basename "$file")
+            # Remove original extension, add .zip
+            BASENAME="${FILENAME%.*}"
             if [ "${#PASSWORD}" -gt 0 ]; then
-              7z a -p"$PASSWORD" -mhe=on -mx=3 "${FOLDER}/${FILENAME}.7z" "$file"
+              7z a -p"$PASSWORD" "${FOLDER}/${BASENAME}.zip" "$file"
             else
-              7z a -mx=3 "${FOLDER}/${FILENAME}.7z" "$file"
+              7z a "${FOLDER}/${BASENAME}.zip" "$file"
             fi
           done
           rm -rf files
@@ -231,13 +238,13 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
 
-      - name: Commit and Push all chunks
+      - name: Commit and Push all archives
         run: |
           FOLDER="${{ steps.process_files.outputs.folder }}"
-          git add "${FOLDER}/"*.7z* 2>/dev/null || true
+          git add "${FOLDER}/"*.zip 2>/dev/null || true
           if ! git diff --staged --quiet; then
             file_count=$(git diff --staged --name-only | wc -l)
-            git commit -m "Add files in ${FOLDER} (${file_count} chunks)"
+            git commit -m "Add files in ${FOLDER} (${file_count} archives)"
             push_success=false
             max_attempts=15
             for attempt in $(seq 1 $max_attempts); do
