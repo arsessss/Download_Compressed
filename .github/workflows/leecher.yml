@@ -1,14 +1,14 @@
-name: Transfer file to GitHub
+name: Download from YouTube (via API)
 
 on:
   workflow_dispatch:
     inputs:
-      file_url_1:
-        description: 'Link (YouTube or direct)'
+      url:
+        description: 'YouTube URL or direct link'
         required: true
         type: string
-      youtube_quality:
-        description: 'Quality for YouTube'
+      quality:
+        description: 'Quality'
         default: '1080'
         type: choice
         options:
@@ -20,22 +20,48 @@ jobs:
   download:
     runs-on: ubuntu-latest
     steps:
-      - name: Install yt-dlp
+      - name: Download using API
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          pip install yt-dlp
-      - name: Download
-        run: |
-          URL="${{ github.event.inputs.file_url_1 }}"
+          URL="${{ github.event.inputs.url }}"
+          QUALITY="${{ github.event.inputs.quality }}"
           mkdir -p downloads
+          
           if [[ "$URL" == *"youtube.com"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
-            yt-dlp -f "best[height<=${{ github.event.inputs.youtube_quality }}]" -o "downloads/video.mp4" "$URL"
+            echo "Using YouTube download API..."
+            # Using savetik API (free, works without cookies)
+            VIDEO_ID=$(echo "$URL" | grep -oP "(?<=v=|/)[^&?]+")
+            API_URL="https://savetik.co/api/ajaxSearch"
+            
+            RESPONSE=$(curl -s -X POST "$API_URL" \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              -d "q=https://www.youtube.com/watch?v=$VIDEO_ID")
+            
+            # Extract video URL based on quality
+            if [[ "$QUALITY" == "1080" ]]; then
+              DOWNLOAD_URL=$(echo "$RESPONSE" | grep -oP "https://[^"]+1080[^"]+mp4" | head -1)
+            elif [[ "$QUALITY" == "720" ]]; then
+              DOWNLOAD_URL=$(echo "$RESPONSE" | grep -oP "https://[^"]+720[^"]+mp4" | head -1)
+            else
+              DOWNLOAD_URL=$(echo "$RESPONSE" | grep -oP "https://[^"]+480[^"]+mp4" | head -1)
+            fi
+            
+            if [ -n "$DOWNLOAD_URL" ]; then
+              curl -L -o "downloads/video.mp4" "$DOWNLOAD_URL"
+              echo "Download complete"
+            else
+              # Fallback: use yt-dlp directly
+              pip install yt-dlp
+              yt-dlp -f "best[height<=$QUALITY]" -o "downloads/video.mp4" "$URL"
+            fi
           else
             curl -L -o "downloads/file" "$URL"
           fi
-      - name: Upload
+          
+          ls -la downloads/
+      
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: downloaded
+          name: downloaded-file
           path: downloads/
+          retention-days: 7
