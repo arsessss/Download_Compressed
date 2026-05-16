@@ -1,14 +1,14 @@
-name: Leech360D v4
+name: Leech360D Downloader
 
 on:
   workflow_dispatch:
     inputs:
       file_url_1:
-        description: URL
+        description: 'Link 1 (required)'
         required: true
         type: string
       youtube_quality:
-        description: Quality
+        description: 'YouTube quality'
         required: false
         type: choice
         default: '1080'
@@ -28,21 +28,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Deno
-        run: |
-          curl -fsSL https://deno.land/install.sh | sh
-          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+
+      - name: Clean old files
+        run: rm -f *.zip *.log
+
       - name: Install yt-dlp
         run: |
           pip3 install yt-dlp
           sudo apt-get install -y zip
-      - name: Use cookies
-        run: echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-      - name: Run download
-        id: download
+
+      - name: Download and log
         run: |
-          export PATH="$HOME/.deno/bin:$PATH"
-          mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
           {
@@ -52,31 +48,22 @@ jobs:
             echo "Time: $(date)"
             echo ""
             if [[ "$URL" == *"youtube"* ]]; then
-              echo "YouTube mode with Deno"
-              yt-dlp --cookies cookies.txt --js-runtime deno -f "best[height<=${QUALITY}]" -o "downloads/%(title)s.%(ext)s" "$URL"
+              echo "YouTube mode"
+              yt-dlp -f "best[height<=${QUALITY}]" -o "video.mp4" "$URL" 2>&1
             else
-              FILENAME=$(basename "$URL" | cut -d"?" -f1)
-              curl -L -o "downloads/$FILENAME" "$URL"
+              echo "Direct mode"
+              curl -L -o "file.dat" "$URL" 2>&1
             fi
             echo ""
             echo "Exit code: $?"
-            echo "=== END LOG ==="
-          } | tee logs.txt
-          exit 0
-      - name: Zip files
+            echo "=== END ==="
+          } | tee download.log
+
+      - name: Save logs
         run: |
-          if [ -d downloads ] && [ "$(ls -A downloads)" ]; then
-            cd downloads
-            FIRST_FILE=$(ls | head -1)
-            BASENAME="${FIRST_FILE%.*}"
-            zip -r "../${BASENAME}.zip" .
-            cd ..
-            echo "BASENAME=$BASENAME" >> $GITHUB_ENV
-          fi
-      - name: Push logs and files
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          cp download.log logs.txt
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
           git add logs.txt *.zip 2>/dev/null || true
-          git commit -m "Update logs and files" || true
+          git commit -m "Add logs" || true
           git push origin main
