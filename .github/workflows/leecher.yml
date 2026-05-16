@@ -45,6 +45,20 @@ on:
         required: false
         type: string
         default: ''
+      split_size:
+        description: 'Maximum size per chunk (MB)'
+        required: false
+        type: choice
+        default: '95  (maximum - for large files)'
+        options:
+          - '25  (slow internet - small files)'
+          - '50  (medium)'
+          - '95  (maximum - for large files)'
+      delete_old_archives:
+        description: 'Delete old archives (if checked, all previous archives will be removed)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -64,23 +78,26 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Clean old archives (ALWAYS)
+      - name: Clean old archives
+        if: ${{ github.event.inputs.delete_old_archives == 'true' }}
         run: |
           echo "Cleaning old archives..."
-          find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.mp4" \) -exec rm -v {} \;
+          find . -maxdepth 1 -type f \( -name "*.7z.*" -o -name "*.7z" \) -exec rm -v {} \;
           find . -maxdepth 1 -type d -name "downloads" -exec rm -rf {} \;
-          git rm --cached *.zip 2>/dev/null || true
+          git rm --cached *.7z.* 2>/dev/null || true
+          git rm --cached *.7z 2>/dev/null || true
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install Deno and yt-dlp
+      - name: Install Deno and yt-dlp with EJS support
         run: |
-          # Install Deno (required for YouTube's n-challenge)
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
-          # Install yt-dlp
-          pip3 install yt-dlp --break-system-packages
-          # Install 7zip
+          pip3 install "yt-dlp[default]" yt-dlp-ejs --break-system-packages || pip3 install "yt-dlp[default]" yt-dlp-ejs
+          curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz | tar -xJ
+          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
+          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+          rm -rf ffmpeg-master-latest-linux64-gpl
           sudo apt-get update -qq && sudo apt-get install -y p7zip-full
 
       - name: Create cookies file from secret
@@ -90,6 +107,9 @@ jobs:
       - name: Parse inputs
         id: parse
         run: |
+          SIZE=$(echo "${{ github.event.inputs.split_size }}" | grep -oP '\d+')
+          echo "split_mb=${SIZE:-95}" >> $GITHUB_OUTPUT
+
           cat > urls.txt << URLEOF
           ${{ github.event.inputs.file_url_1 }}
           ${{ github.event.inputs.file_url_2 }}
@@ -97,8 +117,10 @@ jobs:
           ${{ github.event.inputs.file_url_4 }}
           ${{ github.event.inputs.file_url_5 }}
           URLEOF
+
           sed -i '/^$/d' urls.txt
           sed -i 's/^[ \t]*//;s/[ \t]*$//' urls.txt
+
           total=$(wc -l < urls.txt)
           echo "url_count=${total}" >> $GITHUB_OUTPUT
           echo "URL count: ${total}"
@@ -118,21 +140,19 @@ jobs:
             echo "[$counter/$total] Processing: $url"
 
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "Detected YouTube link. Requested quality: ${YT_QUALITY}p"
-              echo "Downloading with yt-dlp + Deno + cookies..."
+              echo "Detected YouTube link. Downloading with yt-dlp + Deno + cookies..."
 
-              # Use Android client with cookies and deno
               yt-dlp --cookies cookies.txt \
-                     --extractor-args "youtube:player_client=android" \
+                     --extractor-args "youtube:player_client=tv,android_sdkless" \
                      --js-runtime deno \
-                     -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
+                     -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
                      --merge-output-format mp4 \
                      -o "files/yt_video_${counter}.%(ext)s" \
                      "$url" || \
               yt-dlp --cookies cookies.txt \
-                     --extractor-args "youtube:player_client=tv" \
+                     --extractor-args "youtube:player_client=web" \
                      --js-runtime deno \
-                     -f "best[height<=${YT_QUALITY}]" \
+                     -f "bestvideo[height<=${YT_QUALITY}]+bestaudio/best[height<=${YT_QUALITY}]" \
                      --merge-output-format mp4 \
                      -o "files/yt_video_${counter}.%(ext)s" \
                      "$url"
@@ -152,14 +172,35 @@ jobs:
               fi
             else
               echo "Normal direct download"
-              FILENAME=$(echo "$url" | sed 's/?.*//' | xargs basename)
-              if [ -z "$FILENAME" ]; then
-                FILENAME="file_${counter}"
+              FILENAME_FROM_URL=$(echo "$url" | sed 's/?.*//' | xargs basename)
+              if [ -z "$FILENAME_FROM_URL" ]; then
+                FILENAME_FROM_URL="unknown_${counter}"
               fi
-              echo "Download filename: ${FILENAME}"
-              if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FILENAME}" "$url"; then
-                size=$(ls -lh "files/${FILENAME}" | awk '{print $5}')
-                echo "Downloaded: ${FILENAME} ($size)"
+              FILENAME_BASE="${FILENAME_FROM_URL%.*}"
+              FILENAME_EXT="${FILENAME_FROM_URL##*.}"
+              if [ "$FILENAME_BASE" = "$FILENAME_FROM_URL" ]; then
+                FILENAME_EXT=""
+              fi
+              PREFIX="sci-hub.ir"
+              if [ "$total" -gt 1 ]; then
+                NUM=$(printf '%02d' $counter)
+                DL_NAME="${PREFIX}_${NUM}_${FILENAME_BASE}"
+              else
+                DL_NAME="${PREFIX}_${FILENAME_BASE}"
+              fi
+              MAXLEN=50
+              if [ ${#DL_NAME} -gt $MAXLEN ]; then
+                DL_NAME="${DL_NAME:0:$MAXLEN}"
+              fi
+              if [ -n "$FILENAME_EXT" ]; then
+                FINAL_FILENAME="${DL_NAME}.${FILENAME_EXT}"
+              else
+                FINAL_FILENAME="${DL_NAME}"
+              fi
+              echo "Download filename: ${FINAL_FILENAME}"
+              if curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "files/${FINAL_FILENAME}" "$url"; then
+                size=$(ls -lh "files/${FINAL_FILENAME}" | awk '{print $5}')
+                echo "Downloaded: ${FINAL_FILENAME} ($size)"
                 success=$((success + 1))
               else
                 echo "Failed: $url"
@@ -169,19 +210,18 @@ jobs:
           done < urls.txt
 
           echo "success_count=${success}" >> $GITHUB_OUTPUT
-          echo "Files in directory:"
-          ls -la files/ || true
 
-      - name: Archive files (ZIP format, single file)
+      - name: Process and archive each file
         id: process_files
         run: |
+          SPLIT_MB=${{ steps.parse.outputs.split_mb }}
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
           FOLDER="downloads/${TIMESTAMP}"
           mkdir -p "$FOLDER"
           PASSWORD="${{ github.event.inputs.zip_password }}"
 
           echo "Output folder: ${FOLDER}"
-          echo "Archive mode: ZIP (single file)"
+          echo "Split size: ${SPLIT_MB}MB"
 
           counter=0
           for file in files/*; do
@@ -189,11 +229,13 @@ jobs:
             counter=$((counter + 1))
             echo "Processing: $(basename "$file")"
             FILENAME=$(basename "$file")
-            BASENAME="${FILENAME%.*}"
             if [ "${#PASSWORD}" -gt 0 ]; then
-              7z a -p"$PASSWORD" "${FOLDER}/${BASENAME}.zip" "$file"
+              7z a -p"$PASSWORD" -mhe=on -mx=3 -v${SPLIT_MB}m "${FOLDER}/${FILENAME}.7z" "$file"
             else
-              7z a "${FOLDER}/${BASENAME}.zip" "$file"
+              7z a -mx=3 -v${SPLIT_MB}m "${FOLDER}/${FILENAME}.7z" "$file"
+            fi
+            if [ -f "${FOLDER}/${FILENAME}.7z.001" ] && [ ! -f "${FOLDER}/${FILENAME}.7z.002" ]; then
+              mv "${FOLDER}/${FILENAME}.7z.001" "${FOLDER}/${FILENAME}.7z"
             fi
           done
           rm -rf files
@@ -206,13 +248,13 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
 
-      - name: Commit and Push all archives
+      - name: Commit and Push all chunks
         run: |
           FOLDER="${{ steps.process_files.outputs.folder }}"
-          git add "${FOLDER}/"*.zip 2>/dev/null || true
+          git add "${FOLDER}/"*.7z* 2>/dev/null || true
           if ! git diff --staged --quiet; then
             file_count=$(git diff --staged --name-only | wc -l)
-            git commit -m "Add files in ${FOLDER} (${file_count} archives)"
+            git commit -m "Add files in ${FOLDER} (${file_count} chunks)"
             push_success=false
             max_attempts=15
             for attempt in $(seq 1 $max_attempts); do
@@ -241,6 +283,7 @@ jobs:
           |------|-------|
           | Successful downloads | ${{ steps.download_files.outputs.success_count }} / ${{ steps.parse.outputs.url_count }} |
           | Files processed | ${{ steps.process_files.outputs.processed_count }} |
+          | Max chunk size | ${{ steps.parse.outputs.split_mb }} MB |
           | Total size | ${TOTAL_SIZE} |
           | 📂 Download folder | [${FOLDER}](https://github.com/${{ github.repository }}/tree/main/${FOLDER}) |
           | Status | ✅ Success |
