@@ -1,0 +1,11 @@
+=== DOWNLOAD LOG ===
+Time: Sat May 16 07:20:30 UTC 2026
+URL: https://raw.githubusercontent.com/Stuk/jszip/v3.10.1/dist/jszip.min.js
+Quality: 1080
+Direct download mode
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100 97630  100 97630    0     0  1613k      0 --:--:-- --:--:-- --:--:-- 1615k
+  adding: jszip.min.js (deflated 71%)
+Created: jszip.min.zip
+=== END LOG ===
