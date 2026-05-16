@@ -67,16 +67,25 @@ jobs:
       - name: Clean old archives (ALWAYS)
         run: |
           echo "Cleaning old archives..."
-          find . -maxdepth 1 -type f \( -name "*.zip" \) -exec rm -v {} \;
+          find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.mp4" \) -exec rm -v {} \;
           find . -maxdepth 1 -type d -name "downloads" -exec rm -rf {} \;
           git rm --cached *.zip 2>/dev/null || true
           git rm --cached -r downloads 2>/dev/null || true
           echo "Old archives cleaned."
 
-      - name: Install dependencies (curl, jq, 7z)
+      - name: Install Deno and yt-dlp
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full jq curl
+          # Install Deno (required for YouTube's n-challenge)
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          # Install yt-dlp
+          pip3 install yt-dlp --break-system-packages
+          # Install 7zip
+          sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+
+      - name: Create cookies file from secret
+        run: |
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
 
       - name: Parse inputs
         id: parse
@@ -95,7 +104,7 @@ jobs:
           echo "URL count: ${total}"
           cat -n urls.txt
 
-      - name: Download files (YouTube via Cobalt API, direct via curl)
+      - name: Download files (YouTube with Deno + cookies, direct via curl)
         id: download_files
         run: |
           mkdir -p files
@@ -109,43 +118,37 @@ jobs:
             echo "[$counter/$total] Processing: $url"
 
             if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
-              echo "Detected YouTube link. Using Cobalt API..."
-              echo "Requested quality: ${YT_QUALITY}p"
+              echo "Detected YouTube link. Requested quality: ${YT_QUALITY}p"
+              echo "Downloading with yt-dlp + Deno + cookies..."
 
-              # Map quality to Cobalt format
-              case "${YT_QUALITY}" in
-                "2160") COBALT_QUALITY="2160" ;;
-                "1440") COBALT_QUALITY="1440" ;;
-                "1080") COBALT_QUALITY="1080" ;;
-                "720")  COBALT_QUALITY="720" ;;
-                "480")  COBALT_QUALITY="480" ;;
-                "360")  COBALT_QUALITY="360" ;;
-                *)      COBALT_QUALITY="1080" ;;
-              esac
+              # Use Android client with cookies and deno
+              yt-dlp --cookies cookies.txt \
+                     --extractor-args "youtube:player_client=android" \
+                     --js-runtime deno \
+                     -f "bestvideo[height<=${YT_QUALITY}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${YT_QUALITY}]" \
+                     --merge-output-format mp4 \
+                     -o "files/yt_video_${counter}.%(ext)s" \
+                     "$url" || \
+              yt-dlp --cookies cookies.txt \
+                     --extractor-args "youtube:player_client=tv" \
+                     --js-runtime deno \
+                     -f "best[height<=${YT_QUALITY}]" \
+                     --merge-output-format mp4 \
+                     -o "files/yt_video_${counter}.%(ext)s" \
+                     "$url"
 
-              # Call Cobalt API (version 8 - still working as of 2026)
-              API_RESPONSE=$(curl -s -X POST https://api.cobalt.tools/api/json \
-                -H "Accept: application/json" \
-                -H "Content-Type: application/json" \
-                -d "{\"url\": \"$url\", \"vQuality\": \"$COBALT_QUALITY\", \"vCodec\": \"h264\", \"aFormat\": \"mp3\"}")
-
-              DOWNLOAD_URL=$(echo "$API_RESPONSE" | jq -r '.url')
-              FILENAME=$(echo "$API_RESPONSE" | jq -r '.filename')
-
-              if [ "$DOWNLOAD_URL" != "null" ] && [ -n "$DOWNLOAD_URL" ]; then
-                echo "Got download URL, downloading..."
-                curl -L -o "files/${FILENAME}" "$DOWNLOAD_URL"
-                if [ -f "files/${FILENAME}" ]; then
-                  size=$(ls -lh "files/${FILENAME}" | awk '{print $5}')
-                  echo "Downloaded: ${FILENAME} ($size)"
-                  success=$((success + 1))
-                else
-                  echo "Failed to download from Cobalt URL"
+              DOWNLOADED_FILE=$(ls files/yt_video_${counter}.* 2>/dev/null | head -1)
+              if [ -f "$DOWNLOADED_FILE" ]; then
+                TITLE=$(yt-dlp --cookies cookies.txt --js-runtime deno --get-title "$url" 2>/dev/null | tr -cd 'a-zA-Z0-9_.-' | cut -c1-50)
+                if [ -z "$TITLE" ]; then
+                  TITLE="youtube_video_${counter}"
                 fi
+                mv "$DOWNLOADED_FILE" "files/${TITLE}.mp4"
+                size=$(ls -lh "files/${TITLE}.mp4" | awk '{print $5}')
+                echo "Downloaded: ${TITLE}.mp4 ($size)"
+                success=$((success + 1))
               else
-                echo "Cobalt API failed. Response: $API_RESPONSE"
-                echo "Trying fallback with yt-dlp (might fail)..."
-                yt-dlp --cookies cookies.txt -f "best[height<=${YT_QUALITY}]" -o "files/video_${counter}.mp4" "$url" || true
+                echo "Failed to download YouTube video"
               fi
             else
               echo "Normal direct download"
@@ -166,6 +169,8 @@ jobs:
           done < urls.txt
 
           echo "success_count=${success}" >> $GITHUB_OUTPUT
+          echo "Files in directory:"
+          ls -la files/ || true
 
       - name: Archive files (ZIP format, single file)
         id: process_files
