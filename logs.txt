@@ -1,12 +1,27 @@
-=== DOWNLOAD LOG ===
-URL: https://www.youtube.com/watch?v=6wk7t7_IBi0
-Quality: 1080
-Time: Sat May 16 05:03:52 UTC 2026
+=== YT_COOKIES CONTENT ===
+Secret exists
 
-YouTube mode
-[youtube] Extracting URL: https://www.youtube.com/watch?v=6wk7t7_IBi0
-[youtube] 6wk7t7_IBi0: Downloading webpage
-WARNING: [youtube] No supported JavaScript runtime could be found. Only deno is enabled by default; to use another runtime add  --js-runtimes RUNTIME[:PATH]  to your command/config. YouTube extraction without a JS runtime has been deprecated, and some formats may be missing. See  https://github.com/yt-dlp/yt-dlp/wiki/EJS  for details on installing one
-[youtube] 6wk7t7_IBi0: Downloading android vr player API JSON
-WARNING: [youtube] No title found in player responses; falling back to title from initial data. Other metadata may also be missing
-ERROR: [youtube] 6wk7t7_IBi0: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies  for tips on effectively exporting YouTube cookies
+# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	TRUE	1814733441	__Secure-1PAPISID	9N0lmr6YxXFHjUhg/AH0ZCX-UsocxzegOM
+.youtube.com	TRUE	/	TRUE	1814733441	__Secure-1PSID	g.a0007AhxenGQsnN0naCotUWUiNoxWaKmWdJ1klawmMp2boUqMd_TeT7BJFQ6j30socdbOZN7LQACgYKAbISARQSFQHGX2MiGjUKHf38LdWu9iFteRQMAxoVAUF8yKpwyLtuly3A77cJy5BkV15T0076
+.youtube.com	TRUE	/	TRUE	1801893307	__Secure-1PSIDCC	AKEyXzVk-TZJHcg_EPtQSFXhQQNWIkmocI3OYhc3T9-I38G3rdZYX95f1JwkS3w5zYQiDs3r0ds
+.youtube.com	TRUE	/	TRUE	1801893307	__Secure-1PSIDTS	sidts-CjUBBj1CYkvf8lPvZTERT7tNp_RMd286xOSWVevFMthNmwehTQ_EjBlB01WXN4JpNJc-Fi8q5xAA
+.youtube.com	TRUE	/	TRUE	1814773941	__Secure-3PAPISID	9N0lmr6YxXFHjUhg/AH0ZCX-UsocxzegOM
+.youtube.com	TRUE	/	TRUE	1814773941	__Secure-3PSID	g.a0007AhxenGQsnN0naCotUWUiNoxWaKmWdJ1klawmMp2boUqMd_TiyPjwbjO4BkPEVWCuagQSQACgYKAUcSARQSFQHGX2MilWSnpDroFU1wdMsrdmZsBxoVAUF8yKrVSdoboDEbc9Gy_s2ob9-f0076
+.youtube.com	TRUE	/	TRUE	1801893307	__Secure-3PSIDCC	AKEyXzU-N8-Op7HiKuBeMncF3S1g_S3s1wp4TzVSxEY6zTWzKM8YLQo4B5nFBRI8KE4xMcYv2f8
+.youtube.com	TRUE	/	TRUE	1801893307	__Secure-3PSIDTS	sidts-CjUBBj1CYkvf8lPvZTERT7tNp_RMd286xOSWVevFMthNmwehTQ_EjBlB01WXN4JpNJc-Fi8q5xAA
+.youtube.com	TRUE	/	TRUE	1793903593	__Secure-ROLLOUT_TOKEN	CObs-rzRspSYvgEQ5PvioNLqjwMY4qfT6K75kgM%3D
+.youtube.com	TRUE	/	TRUE	1793822860	__Secure-YNID	16.YT=UzTUaswnqTujIU7pEWo1DX6XBvA-lqIBa_ch7ViarcHcpF_OdsHclay8coq70fmR2yguQ6h2ytfuCm4BgKlNmW7HpSKGNgmIf2HFUo7ORi8iytlwQkc4-kp-YAL_m8jLpZlBluwMKOgsrZ4TKmN-VsaFCOQg030nXME86k_2fy-_-UzxvDeWuDLDBBV4cKa5C1MaJwx1_tf0V2i1wm4bj8jlPLL7mGy2z_2BcGjDyhrXjkMd1pyPLF65VhrmyUTn1haSa_bpEbLl2C9x7-N88i5cXJZPTZ43Lr53m2Hncc43gr_D50QAJtBUiqkWPH1yMZ4-CsngxrwbLaKFk4kdBA
+.youtube.com	TRUE	/	FALSE	1802638813	_ga	GA1.1.1060839083.1771610413
+.youtube.com	TRUE	/	FALSE	1802638813	_ga_5JSYX2Q357	GS2.1.s1771614515
+.youtube.com	TRUE	/	FALSE	1814733441	APISID	VLZ7gbU9D2ylorlO/ANGwpuhUYV2O19adt
+.youtube.com	TRUE	/	TRUE	1814733441	HSID	ANHKqUTpg-Shc9XRz
+.youtube.com	TRUE	/	TRUE	1814732149	LOGIN_INFO	AFmmF2swRgIhANhPMS1epJyObRYxpDlE9lx_b4Netbsc43BabUFgEkDeAiEA9Xpd-Ru-Z2U0Wutz7DJKeePyfjQ47vxfIy66ZPmPseA:QUQ3MjNmeDE4T1AxeDk0d3NMVkplcmlBdWNYd0s1YlFHdnQ5QURCeWxUYU9wWElRSmQ4bTdGLVd3eHVITzhCR3RpVmRPWXNkMTlnU3JGemVhbzJGSXRwNWx1QzA0eTctOS10RHNGNGl4TzU5Mllhd1g1YnFhOC0yazh0NWlUU3piMXozdEFuOXdMNURfdTF2WTBSZnBEdlBsajhpR0xLYWt3
+.youtube.com	TRUE	/	TRUE	1792966445	NID	529=ApahO4Z1RlWD9uFt4kIR45zCkLTa_JhWdxq_FE7hX1A5oh_FpYTWHgWsHjMjbra3OiyOO1VWcEWcZyy_QKC_EKfMngo9jhLcZ5F7NfkUMpdzsOob3s0PF4U-1BaKpoXMfLMvzxuL_XQU4TWTQfJ9ErlpIxraouDdpIqMC1jjyzOqUUo6V2OYEL32qu06Sk8c3KEuCFcttWFCMc-IeQZWZ3r88991BpRE
+.youtube.com	TRUE	/	TRUE	1806765653	PREF	tz=Asia.Tehran&f5=30000&f7=150&f6=40000000
+.youtube.com	TRUE	/	TRUE	1814733441	SAPISID	9N0lmr6YxXFHjUhg/AH0ZCX-UsocxzegOM
+.youtube.com	TRUE	/	FALSE	1814733441	SID	g.a0007AhxenGQsnN0naCotUWUiNoxWaKmWdJ1klawmMp2boUqMd_TB80IxW0bMEfr_66c5jQoXQACgYKAWoSARQSFQHGX2Mi7l3ZdbHcrXB1QUtSXtOv3hoVAUF8yKq9-Xz0jsQGcedW_vz9id470076
+.youtube.com	TRUE	/	FALSE	1801893307	SIDCC	AKEyXzWzt97EhFfNGOIsouVJxX_WBTVujRL92MLNRXrArPBshJZZmC1QNB0Gnp5b-T1QBo0oQw
+.youtube.com	TRUE	/	TRUE	1801786546	SOCS	CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjYwMjE4LjAwX3AwGgJlbiACGgYIgOvjzAY
+.youtube.com	TRUE	/	TRUE	1814733441	SSID	AiAcYSxNN3MVREkQz
+.youtube.com	TRUE	/	TRUE	1801902813	VISITOR_INFO1_LIVE	tI3-DVIcilc
