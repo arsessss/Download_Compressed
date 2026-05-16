@@ -29,12 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Delete ALL existing zip files
+      - name: Delete all existing zip files
         run: |
-          echo "Deleting all .zip files from repository..."
-          find . -name "*.zip" -type f -exec rm -vf {} \;
-          echo "All zip files deleted"
-          ls -la *.zip 2>/dev/null || echo "No zip files found"
+          echo "Deleting all .zip files..."
+          rm -f *.zip
+          echo "Done"
+
+      - name: Install Deno
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
 
       - name: Install yt-dlp and zip
         run: |
@@ -52,6 +56,7 @@ jobs:
           mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
+          export PATH="$HOME/.deno/bin:$PATH"
           if [[ "$URL" == *"youtube"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
             echo "YouTube mode"
             yt-dlp --cookies cookies.txt \
@@ -63,23 +68,21 @@ jobs:
           else
             echo "Direct download mode"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
-            [ -z "$FILENAME" ] && FILENAME="file.dat"
             curl -L -o "downloads/$FILENAME" "$URL"
           fi
-          echo "Downloaded files:"
-          ls -la downloads/
 
-      - name: Create and push zip
+      - name: Create zip
         run: |
           cd downloads
           FIRST_FILE=$(ls | head -1)
-          BASENAME=$(echo "$FIRST_FILE" | sed "s/\.[^.]*$//")
-          ZIP_NAME="${BASENAME}.zip"
-          echo "Creating zip: $ZIP_NAME"
-          zip -r "../$ZIP_NAME" .
+          BASENAME="${FIRST_FILE%.*}"
+          zip -r "../${BASENAME}.zip" .
           cd ..
+
+      - name: Push
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$ZIP_NAME"
-          git commit -m "Add $ZIP_NAME" || echo "No changes"
+          git add *.zip
+          git commit -m "Add zip" || true
           git push origin main
