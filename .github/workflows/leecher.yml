@@ -29,10 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clean up old files
+      - name: Force clean all old files
         run: |
-          rm -f *.zip
+          echo "Deleting all .zip files..."
+          rm -vf *.zip
+          echo "Deleting downloads folder..."
           rm -rf downloads
+          echo "Deleting cookies..."
+          rm -f cookies.txt
+          echo "Cleanup complete"
+          ls -la
 
       - name: Install yt-dlp and zip
         run: |
@@ -43,14 +49,16 @@ jobs:
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+            echo "Cookies loaded"
           fi
 
       - name: Download
         run: |
+          mkdir -p downloads
           URL="${{ github.event.inputs.file_url_1 }}"
           QUALITY="${{ github.event.inputs.youtube_quality }}"
-          mkdir -p downloads
           if [[ "$URL" == *"youtube"* ]] || [[ "$URL" == *"youtu.be"* ]]; then
+            echo "YouTube mode"
             yt-dlp --cookies cookies.txt \
               --extractor-args "youtube:player_client=tv,android_sdkless" \
               --js-runtime deno \
@@ -58,17 +66,23 @@ jobs:
               -o "downloads/video.mp4" \
               "$URL"
           else
+            echo "Direct download mode"
             FILENAME=$(basename "$URL" | cut -d"?" -f1)
             [ -z "$FILENAME" ] && FILENAME="file.dat"
             curl -L -o "downloads/$FILENAME" "$URL"
           fi
+          echo "Downloaded files:"
+          ls -la downloads/
 
       - name: Create and push zip
         run: |
           cd downloads
           FIRST_FILE=$(ls | head -1)
-          BASENAME="${FIRST_FILE%.*}"
+          echo "First file: $FIRST_FILE"
+          BASENAME=$(echo "$FIRST_FILE" | sed "s/\.[^.]*$//")
+          echo "Basename: $BASENAME"
           ZIP_NAME="${BASENAME}.zip"
+          echo "Zip name: $ZIP_NAME"
           zip -r "../$ZIP_NAME" .
           cd ..
           git config user.name "github-actions[bot]"
