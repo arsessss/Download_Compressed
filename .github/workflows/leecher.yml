@@ -54,11 +54,6 @@ on:
           - '25  (slow internet - small files)'
           - '50  (medium)'
           - '95  (maximum - for large files)'
-      delete_old_archives:
-        description: 'Delete old archives (if checked, all previous archives will be removed)'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -76,18 +71,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Clean old archives
-        if: ${{ github.event.inputs.delete_old_archives == 'true' }}
+      - name: Clean old archives (always)
         run: |
-          echo "Cleaning old archives..."
-          find . -maxdepth 1 -type f \( -name "*.7z.*" -o -name "*.7z" \) -exec rm -v {} \;
-          find . -maxdepth 1 -type d -name "downloads" -exec rm -rf {} \;
-          git rm --cached *.7z.* 2>/dev/null || true
-          git rm --cached *.7z 2>/dev/null || true
-          git rm --cached -r downloads 2>/dev/null || true
-          echo "Old archives cleaned."
+          echo "Cleaning old archives and downloads folder..."
+          
+          # Remove all .7z files from git tracking
+          git rm -rf --ignore-unmatch *.7z *.7z.* downloads/ 2>/dev/null || true
+          
+          # Delete actual files from filesystem
+          rm -rf downloads/ *.7z *.7z.* 2>/dev/null || true
+          
+          # Commit the removal
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "Clean old archives before new download" 2>/dev/null || echo "No files to clean"
+          
+          # Push the cleanup commit
+          git push origin main 2>/dev/null || echo "Nothing to push"
+          
+          echo "Cleanup complete."
 
       - name: Install Deno and yt-dlp with EJS support
         run: |
